@@ -1,32 +1,30 @@
 # datacite-ror
 
-CLI tool to extract the unique affiliation strings from DataCite data files, query them against the ROR (Research Organization Registry) API, and reconcile matches back to DOI/author records.
+CLI tool to extract the unique affiliation strings from the DataCite data, query them against the ROR API, and reconcile matches back to DOI/author records.
 
 ## Installation
 
 ### Prerequisites
 
-- Rust 1.70 or later
-- Access to a ROR API instance (local or remote)
+- [Obtain the DataCite public data file](https://support.datacite.org/docs/datacite-public-data-file)
+- [Setup a local ROR API instance](https://github.com/ror-community/ror-api)
 
-### Building from source
+### Build
 
 ```bash
 cd datacite-ror
 cargo build --release
 ```
 
-The binary will be available at `./target/release/datacite-ror`.
-
 ## Usage
 
 The tool provides three subcommands that form a pipeline:
 
-1. **extract** - Extract unique affiliations from DataCite JSONL files
-2. **query** - Query affiliations against the ROR API
-3. **reconcile** - Reconcile ROR matches back to DOI/author records
+1. `extract` - Extract unique affiliations from DataCite JSONL files
+2. `query` - Query affiliations against the ROR API
+3. `reconcile` - Reconcile ROR matches back to DOI/author records
 
-### Global Options
+### Options
 
 ```
 -v, --verbose    Enable verbose logging
@@ -98,7 +96,7 @@ datacite-ror query \
   --input /work/affiliations \
   --output /work/affiliations \
   --base-url http://localhost:9292 \
-  --concurrency 100 \
+  --concurrency 50 \
   --resume
 ```
 
@@ -171,8 +169,7 @@ datacite-ror extract \
 datacite-ror query \
   --input $WORK_DIR \
   --output $WORK_DIR \
-  --base-url http://localhost:9292 \
-  --concurrency 100 \
+  --concurrency 50 \
   --timeout 60 \
   --resume
 
@@ -180,33 +177,6 @@ datacite-ror query \
 datacite-ror reconcile \
   --input $WORK_DIR \
   --output $WORK_DIR/enriched_datacite_records.jsonl
-```
-
-## Data Flow
-
-```
-DataCite .jsonl.gz files
-         │
-         ▼ (extract)
-┌────────────────────────────────────┐
-│ unique_affiliations.json           │ ─────┐
-│ doi_author_affiliations.jsonl      │      │
-└────────────────────────────────────┘      │
-         │                                   │
-         │                                   │
-         ▼ (query)                          │
-┌────────────────────────────────────┐      │
-│ ror_matches.jsonl                  │      │
-│ ror_matches.failed.jsonl           │      │
-└────────────────────────────────────┘      │
-         │                                   │
-         ▼ (reconcile)                      │
-         ◄──────────────────────────────────┘
-         │
-         ▼
-┌────────────────────────────────────┐
-│ enriched_records.jsonl             │
-└────────────────────────────────────┘
 ```
 
 ## Intermediate File Formats
@@ -250,11 +220,6 @@ Each line contains a failed query:
 }
 ```
 
-## Performance Notes
-
-- **Extract**: Uses parallel processing with Rayon. Set `--threads` based on available CPU cores and I/O bandwidth.
-- **Query**: Uses async HTTP with configurable concurrency. Adjust `--concurrency` based on your ROR API capacity.
-- **Reconcile**: Single-threaded streaming process; memory-efficient for large datasets.
 
 ## Checkpointing
 
@@ -263,7 +228,3 @@ The query command supports checkpointing for long-running jobs:
 - Progress is saved to `ror_matches.checkpoint`
 - Use `--resume` flag to continue from where you left off
 - Checkpoint tracks processed affiliations by hash
-
-## License
-
-See the repository root for license information.
