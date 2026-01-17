@@ -49,6 +49,7 @@ fn test_reconcile_full_pipeline() {
             affiliation_idx: 0,
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "abc123".to_string(),
+            existing_ror_id: None,
         },
         AuthorAffiliationRecord {
             doi: "10.1234/test".to_string(),
@@ -57,6 +58,7 @@ fn test_reconcile_full_pipeline() {
             affiliation_idx: 1,
             affiliation: "Unknown Institution".to_string(),
             affiliation_hash: "unknown".to_string(),
+            existing_ror_id: None,
         },
         AuthorAffiliationRecord {
             doi: "10.1234/test".to_string(),
@@ -65,6 +67,7 @@ fn test_reconcile_full_pipeline() {
             affiliation_idx: 0,
             affiliation: "MIT".to_string(),
             affiliation_hash: "def456".to_string(),
+            existing_ror_id: None,
         },
         // This author has no matching affiliations - should be excluded
         AuthorAffiliationRecord {
@@ -74,6 +77,7 @@ fn test_reconcile_full_pipeline() {
             affiliation_idx: 0,
             affiliation: "No Match Univ".to_string(),
             affiliation_hash: "nomatch".to_string(),
+            existing_ror_id: None,
         },
     ];
 
@@ -143,6 +147,7 @@ fn test_reconcile_skips_doi_with_no_matches() {
             affiliation_idx: 0,
             affiliation: "Unknown".to_string(),
             affiliation_hash: "unknown".to_string(),
+            existing_ror_id: None,
         },
     ];
 

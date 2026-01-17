@@ -177,3 +177,81 @@ fn test_extract_produces_output_files() {
 
     assert_eq!(records.len(), 3); // 3 author-affiliation pairs
 }
+
+#[test]
+fn test_parse_datacite_record_extracts_existing_ror_id() {
+    let record_json = r#"{
+        "id": "10.1234/test",
+        "attributes": {
+            "doi": "10.1234/test",
+            "creators": [
+                {
+                    "name": "Doe, Jane",
+                    "affiliation": [
+                        {
+                            "name": "University of Oxford",
+                            "affiliationIdentifier": "https://ror.org/052gg0110",
+                            "affiliationIdentifierScheme": "ROR"
+                        }
+                    ]
+                }
+            ]
+        }
+    }"#;
+
+    let record: serde_json::Value = serde_json::from_str(record_json).unwrap();
+    let affiliations = datacite_ror::extract::parse_affiliations(&record);
+
+    assert_eq!(affiliations.len(), 1);
+    assert_eq!(affiliations[0].existing_ror_id, Some("https://ror.org/052gg0110".to_string()));
+}
+
+#[test]
+fn test_parse_datacite_record_none_for_missing_ror_id() {
+    let record_json = r#"{
+        "id": "10.1234/test",
+        "attributes": {
+            "doi": "10.1234/test",
+            "creators": [
+                {
+                    "name": "Doe, Jane",
+                    "affiliation": [{"name": "MIT"}]
+                }
+            ]
+        }
+    }"#;
+
+    let record: serde_json::Value = serde_json::from_str(record_json).unwrap();
+    let affiliations = datacite_ror::extract::parse_affiliations(&record);
+
+    assert_eq!(affiliations.len(), 1);
+    assert_eq!(affiliations[0].existing_ror_id, None);
+}
+
+#[test]
+fn test_parse_datacite_record_ignores_non_ror_identifier() {
+    let record_json = r#"{
+        "id": "10.1234/test",
+        "attributes": {
+            "doi": "10.1234/test",
+            "creators": [
+                {
+                    "name": "Doe, Jane",
+                    "affiliation": [
+                        {
+                            "name": "Some Org",
+                            "affiliationIdentifier": "grid.123456.7",
+                            "affiliationIdentifierScheme": "GRID"
+                        }
+                    ]
+                }
+            ]
+        }
+    }"#;
+
+    let record: serde_json::Value = serde_json::from_str(record_json).unwrap();
+    let affiliations = datacite_ror::extract::parse_affiliations(&record);
+
+    assert_eq!(affiliations.len(), 1);
+    assert_eq!(affiliations[0].existing_ror_id, None);
+}

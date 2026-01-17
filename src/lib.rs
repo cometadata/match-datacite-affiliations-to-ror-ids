@@ -17,6 +17,8 @@ pub struct AuthorAffiliationRecord {
     pub affiliation_idx: usize,
     pub affiliation: String,
     pub affiliation_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing_ror_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
