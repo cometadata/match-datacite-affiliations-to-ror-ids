@@ -86,10 +86,19 @@ async fn test_full_pipeline_extract_query_reconcile() {
     assert!(work_dir.join("ror_matches.jsonl").exists());
     assert!(work_dir.join("ror_matches.checkpoint").exists());
 
+    // Create ROR data file for reconcile step
+    let ror_data_file = temp_dir.path().join("ror_data.json");
+    let ror_data = r#"[
+        {"id": "https://ror.org/03vek6s52", "names": [{"value": "Harvard University", "types": ["ror_display"], "lang": "en"}]},
+        {"id": "https://ror.org/00f54p054", "names": [{"value": "Stanford University", "types": ["ror_display"], "lang": "en"}]}
+    ]"#;
+    fs::write(&ror_data_file, ror_data).unwrap();
+
     // Step 3: Reconcile
     let reconcile_args = datacite_ror::reconcile::ReconcileArgs {
         input: work_dir.clone(),
         output: output_file.clone(),
+        ror_data: ror_data_file,
     };
     datacite_ror::reconcile::run(reconcile_args).unwrap();
 

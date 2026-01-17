@@ -4,6 +4,16 @@ use std::fs::File;
 use std::io::{BufRead, Write};
 use tempfile::TempDir;
 
+fn create_minimal_ror_data(dir: &std::path::Path) -> std::path::PathBuf {
+    let ror_file = dir.join("ror_data.json");
+    let ror_data = r#"[
+        {"id": "https://ror.org/052gg0110", "names": [{"value": "University of Oxford", "types": ["ror_display"], "lang": "en"}]},
+        {"id": "https://ror.org/042nb2s44", "names": [{"value": "Massachusetts Institute of Technology", "types": ["ror_display"], "lang": "en"}]}
+    ]"#;
+    std::fs::write(&ror_file, ror_data).unwrap();
+    ror_file
+}
+
 #[test]
 fn test_load_ror_matches_builds_hash_map() {
     let temp_dir = TempDir::new().unwrap();
@@ -96,10 +106,14 @@ fn test_reconcile_full_pipeline() {
         writeln!(file, r#"{{"affiliation":"MIT","affiliation_hash":"def456","ror_id":"https://ror.org/042nb2s44"}}"#).unwrap();
     }
 
+    // Create ROR data file
+    let ror_data_file = create_minimal_ror_data(temp_dir.path());
+
     // Run reconcile
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
         output: output_file.clone(),
+        ror_data: ror_data_file,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -162,10 +176,14 @@ fn test_reconcile_skips_doi_with_no_matches() {
     // Empty ror_matches.jsonl
     File::create(input_dir.join("ror_matches.jsonl")).unwrap();
 
+    // Create ROR data file
+    let ror_data_file = create_minimal_ror_data(temp_dir.path());
+
     // Run reconcile
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
         output: output_file.clone(),
+        ror_data: ror_data_file,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -225,4 +243,78 @@ fn test_load_ror_data_handles_missing_ror_display() {
     let lookup = datacite_ror::reconcile::load_ror_data(&ror_file).unwrap();
 
     assert_eq!(lookup.get("https://ror.org/test123"), Some(&"Test Org".to_string()));
+}
+
+#[test]
+fn test_reconcile_excludes_existing_ror_ids_from_enriched() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_file = temp_dir.path().join("enriched.jsonl");
+    let ror_data_file = temp_dir.path().join("ror_data.json");
+    std::fs::create_dir_all(&input_dir).unwrap();
+
+    // Create ROR data
+    let ror_data = r#"[
+        {"id": "https://ror.org/052gg0110", "names": [{"value": "University of Oxford", "types": ["ror_display"], "lang": "en"}]},
+        {"id": "https://ror.org/042nb2s44", "names": [{"value": "MIT", "types": ["ror_display"], "lang": "en"}]}
+    ]"#;
+    std::fs::write(&ror_data_file, ror_data).unwrap();
+
+    // Create relationships - one with existing ROR ID, one without
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 0,
+            author_name: "Doe, Jane".to_string(),
+            affiliation_idx: 0,
+            affiliation: "University of Oxford".to_string(),
+            affiliation_hash: "abc123".to_string(),
+            existing_ror_id: Some("https://ror.org/052gg0110".to_string()), // Has existing
+        },
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 1,
+            author_name: "Smith, John".to_string(),
+            affiliation_idx: 0,
+            affiliation: "MIT".to_string(),
+            affiliation_hash: "def456".to_string(),
+            existing_ror_id: None, // No existing - should be enriched
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    // Create ROR matches for both affiliations
+    {
+        let mut file = File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+        writeln!(file, r#"{{"affiliation":"University of Oxford","affiliation_hash":"abc123","ror_id":"https://ror.org/052gg0110"}}"#).unwrap();
+        writeln!(file, r#"{{"affiliation":"MIT","affiliation_hash":"def456","ror_id":"https://ror.org/042nb2s44"}}"#).unwrap();
+    }
+
+    // Run reconcile
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: output_file.clone(),
+        ror_data: ror_data_file,
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    // Check enriched output - should only have MIT (no existing ROR ID)
+    let reader = std::io::BufReader::new(File::open(&output_file).unwrap());
+    let records: Vec<EnrichedRecord> = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .filter_map(|l| serde_json::from_str(&l).ok())
+        .collect();
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].creators.len(), 1);
+    assert_eq!(records[0].creators[0].name, "Smith, John");
+    assert_eq!(records[0].creators[0].affiliation[0].name, "MIT");
 }
