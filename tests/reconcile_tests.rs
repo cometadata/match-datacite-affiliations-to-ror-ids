@@ -1,4 +1,5 @@
 use datacite_ror::AuthorAffiliationRecord;
+use datacite_ror::Disagreement;
 use datacite_ror::EnrichedRecord;
 use datacite_ror::ExistingAssignment;
 use datacite_ror::ExistingAssignmentAggregated;
@@ -400,4 +401,148 @@ fn test_reconcile_writes_existing_assignments() {
 
     assert_eq!(agg_records.len(), 1);
     assert_eq!(agg_records[0].count, 2); // Two instances of same mapping
+}
+
+#[test]
+fn test_reconcile_detects_user_disagreements() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_dir = temp_dir.path().join("output");
+    std::fs::create_dir_all(&input_dir).unwrap();
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    // ROR data with both orgs
+    let ror_file = temp_dir.path().join("ror_data.json");
+    let ror_data = r#"[
+        {"id": "https://ror.org/aaa111", "names": [{"value": "Org A", "types": ["ror_display"], "lang": "en"}]},
+        {"id": "https://ror.org/bbb222", "names": [{"value": "Org B", "types": ["ror_display"], "lang": "en"}]}
+    ]"#;
+    std::fs::write(&ror_file, ror_data).unwrap();
+
+    // Same affiliation string assigned to different ROR IDs by different users
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test1".to_string(),
+            author_idx: 0,
+            author_name: "Author 1".to_string(),
+            affiliation_idx: 0,
+            affiliation: "Ambiguous Org".to_string(),
+            affiliation_hash: "ambig123".to_string(),
+            existing_ror_id: Some("https://ror.org/aaa111".to_string()),
+        },
+        AuthorAffiliationRecord {
+            doi: "10.1234/test2".to_string(),
+            author_idx: 0,
+            author_name: "Author 2".to_string(),
+            affiliation_idx: 0,
+            affiliation: "Ambiguous Org".to_string(),
+            affiliation_hash: "ambig123".to_string(),
+            existing_ror_id: Some("https://ror.org/bbb222".to_string()),
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+
+    let output_file = output_dir.join("enriched.jsonl");
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: output_file,
+        ror_data: ror_file,
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    // Check disagreements.jsonl
+    let disagreements_file = output_dir.join("disagreements.jsonl");
+    assert!(disagreements_file.exists());
+
+    let content = std::fs::read_to_string(&disagreements_file).unwrap();
+    let disagreement: Disagreement = serde_json::from_str(content.trim()).unwrap();
+
+    match disagreement {
+        Disagreement::User { affiliation, ror_ids, .. } => {
+            assert_eq!(affiliation, "Ambiguous Org");
+            assert_eq!(ror_ids.len(), 2);
+        }
+        _ => panic!("Expected User disagreement"),
+    }
+}
+
+#[test]
+fn test_reconcile_detects_match_disagreements() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_dir = temp_dir.path().join("output");
+    std::fs::create_dir_all(&input_dir).unwrap();
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let ror_file = temp_dir.path().join("ror_data.json");
+    let ror_data = r#"[
+        {"id": "https://ror.org/user_choice", "names": [{"value": "User Choice Org", "types": ["ror_display"], "lang": "en"}]},
+        {"id": "https://ror.org/our_match", "names": [{"value": "Our Match Org", "types": ["ror_display"], "lang": "en"}]}
+    ]"#;
+    std::fs::write(&ror_file, ror_data).unwrap();
+
+    // User assigned one ROR ID
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 0,
+            author_name: "Author".to_string(),
+            affiliation_idx: 0,
+            affiliation: "Some Org".to_string(),
+            affiliation_hash: "some123".to_string(),
+            existing_ror_id: Some("https://ror.org/user_choice".to_string()),
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    // Our match is different
+    {
+        let mut file = File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+        writeln!(file, r#"{{"affiliation":"Some Org","affiliation_hash":"some123","ror_id":"https://ror.org/our_match"}}"#).unwrap();
+    }
+
+    let output_file = output_dir.join("enriched.jsonl");
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: output_file,
+        ror_data: ror_file,
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    // Check disagreements.jsonl
+    let disagreements_file = output_dir.join("disagreements.jsonl");
+    let content = std::fs::read_to_string(&disagreements_file).unwrap();
+    let disagreement: Disagreement = serde_json::from_str(content.trim()).unwrap();
+
+    match disagreement {
+        Disagreement::Match {
+            existing_ror_id,
+            existing_ror_name,
+            matched_ror_id,
+            matched_ror_name,
+            ..
+        } => {
+            assert_eq!(existing_ror_id, "https://ror.org/user_choice");
+            assert_eq!(existing_ror_name, "User Choice Org");
+            assert_eq!(matched_ror_id, "https://ror.org/our_match");
+            assert_eq!(matched_ror_name, "Our Match Org");
+        }
+        _ => panic!("Expected Match disagreement"),
+    }
 }
