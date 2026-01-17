@@ -59,3 +59,48 @@ pub struct EnrichedRecord {
     pub doi: String,
     pub creators: Vec<EnrichedCreator>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExistingAssignment {
+    pub doi: String,
+    pub author_idx: usize,
+    pub author_name: String,
+    pub affiliation: String,
+    pub ror_id: String,
+    pub ror_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExistingAssignmentAggregated {
+    pub affiliation: String,
+    pub affiliation_hash: String,
+    pub ror_id: String,
+    pub ror_name: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RorIdCount {
+    pub ror_id: String,
+    pub ror_name: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Disagreement {
+    User {
+        affiliation: String,
+        affiliation_hash: String,
+        ror_ids: Vec<RorIdCount>,
+    },
+    Match {
+        affiliation: String,
+        affiliation_hash: String,
+        existing_ror_id: String,
+        existing_ror_name: String,
+        existing_count: usize,
+        matched_ror_id: String,
+        matched_ror_name: String,
+    },
+}
