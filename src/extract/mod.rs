@@ -73,10 +73,10 @@ fn process_file(
 
             batch.extend(affiliations);
 
-            if batch.len() >= batch_size {
-                if tx.send(std::mem::take(&mut batch)).is_err() {
-                    break;
-                }
+            if batch.len() >= batch_size
+                && tx.send(std::mem::take(&mut batch)).is_err()
+            {
+                break;
             }
         }
     }

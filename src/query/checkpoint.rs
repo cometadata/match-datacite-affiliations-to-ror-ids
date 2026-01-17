@@ -56,4 +56,8 @@ impl Checkpoint {
     pub fn len(&self) -> usize {
         self.processed.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.processed.is_empty()
+    }
 }
