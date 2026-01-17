@@ -30,6 +30,26 @@ fn extract_affiliation_name(affiliation: &Value) -> Option<String> {
     }
 }
 
+/// Extracts ROR ID from affiliation if present and scheme is ROR
+fn extract_existing_ror_id(affiliation: &Value) -> Option<String> {
+    match affiliation {
+        Value::Object(_) => {
+            let scheme = affiliation
+                .get("affiliationIdentifierScheme")
+                .and_then(Value::as_str)?;
+            if scheme.eq_ignore_ascii_case("ROR") {
+                affiliation
+                    .get("affiliationIdentifier")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
     let mut results = Vec::new();
 
@@ -64,7 +84,7 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
                         affiliation_idx,
                         affiliation: affiliation_name.clone(),
                         affiliation_hash: hash_affiliation(&affiliation_name),
-                        existing_ror_id: None,
+                        existing_ror_id: extract_existing_ror_id(affiliation),
                     });
                 }
             }
