@@ -17,9 +17,13 @@ pub struct ReconcileArgs {
     #[arg(short, long)]
     pub input: PathBuf,
 
-    /// Output file
+    /// Output file for enriched records
     #[arg(short, long, default_value = "enriched_records.jsonl")]
     pub output: PathBuf,
+
+    /// Path to ROR data dump JSON file
+    #[arg(short, long)]
+    pub ror_data: PathBuf,
 }
 
 pub fn load_ror_matches<P: AsRef<Path>>(path: P) -> Result<HashMap<String, String>> {
