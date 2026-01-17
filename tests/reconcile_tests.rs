@@ -1,5 +1,7 @@
 use datacite_ror::AuthorAffiliationRecord;
 use datacite_ror::EnrichedRecord;
+use datacite_ror::ExistingAssignment;
+use datacite_ror::ExistingAssignmentAggregated;
 use std::fs::File;
 use std::io::{BufRead, Write};
 use tempfile::TempDir;
@@ -317,4 +319,85 @@ fn test_reconcile_excludes_existing_ror_ids_from_enriched() {
     assert_eq!(records[0].creators.len(), 1);
     assert_eq!(records[0].creators[0].name, "Smith, John");
     assert_eq!(records[0].creators[0].affiliation[0].name, "MIT");
+}
+
+#[test]
+fn test_reconcile_writes_existing_assignments() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_dir = temp_dir.path().join("output");
+    std::fs::create_dir_all(&input_dir).unwrap();
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let ror_data_file = create_minimal_ror_data(temp_dir.path());
+
+    // Create relationships with existing ROR IDs
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test1".to_string(),
+            author_idx: 0,
+            author_name: "Doe, Jane".to_string(),
+            affiliation_idx: 0,
+            affiliation: "University of Oxford".to_string(),
+            affiliation_hash: "abc123".to_string(),
+            existing_ror_id: Some("https://ror.org/052gg0110".to_string()),
+        },
+        AuthorAffiliationRecord {
+            doi: "10.1234/test2".to_string(),
+            author_idx: 0,
+            author_name: "Smith, John".to_string(),
+            affiliation_idx: 0,
+            affiliation: "University of Oxford".to_string(),
+            affiliation_hash: "abc123".to_string(),
+            existing_ror_id: Some("https://ror.org/052gg0110".to_string()),
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    // Empty matches file
+    File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+
+    let output_file = output_dir.join("enriched.jsonl");
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: output_file,
+        ror_data: ror_data_file,
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    // Check existing_assignments.jsonl
+    let existing_file = output_dir.join("existing_assignments.jsonl");
+    assert!(existing_file.exists());
+
+    let reader = std::io::BufReader::new(File::open(&existing_file).unwrap());
+    let records: Vec<ExistingAssignment> = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .filter_map(|l| serde_json::from_str(&l).ok())
+        .collect();
+
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0].ror_id, "https://ror.org/052gg0110");
+    assert_eq!(records[0].ror_name, "University of Oxford");
+
+    // Check aggregated file
+    let agg_file = output_dir.join("existing_assignments_aggregated.jsonl");
+    assert!(agg_file.exists());
+
+    let reader = std::io::BufReader::new(File::open(&agg_file).unwrap());
+    let agg_records: Vec<ExistingAssignmentAggregated> = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .filter_map(|l| serde_json::from_str(&l).ok())
+        .collect();
+
+    assert_eq!(agg_records.len(), 1);
+    assert_eq!(agg_records[0].count, 2); // Two instances of same mapping
 }
