@@ -173,3 +173,56 @@ fn test_reconcile_skips_doi_with_no_matches() {
     let content = std::fs::read_to_string(&output_file).unwrap();
     assert!(content.trim().is_empty());
 }
+
+#[test]
+fn test_load_ror_data_builds_name_lookup() {
+    let temp_dir = TempDir::new().unwrap();
+    let ror_file = temp_dir.path().join("ror_data.json");
+
+    let ror_data = r#"[
+        {
+            "id": "https://ror.org/052gg0110",
+            "names": [
+                {"value": "Oxford", "types": ["acronym"], "lang": null},
+                {"value": "University of Oxford", "types": ["ror_display", "label"], "lang": "en"}
+            ]
+        },
+        {
+            "id": "https://ror.org/042nb2s44",
+            "names": [
+                {"value": "MIT", "types": ["acronym"], "lang": null},
+                {"value": "Massachusetts Institute of Technology", "types": ["ror_display", "label"], "lang": "en"}
+            ]
+        }
+    ]"#;
+
+    std::fs::write(&ror_file, ror_data).unwrap();
+
+    let lookup = datacite_ror::reconcile::load_ror_data(&ror_file).unwrap();
+
+    assert_eq!(lookup.len(), 2);
+    assert_eq!(lookup.get("https://ror.org/052gg0110"), Some(&"University of Oxford".to_string()));
+    assert_eq!(lookup.get("https://ror.org/042nb2s44"), Some(&"Massachusetts Institute of Technology".to_string()));
+}
+
+#[test]
+fn test_load_ror_data_handles_missing_ror_display() {
+    let temp_dir = TempDir::new().unwrap();
+    let ror_file = temp_dir.path().join("ror_data.json");
+
+    // Record with only alias, no ror_display - should fall back to first name
+    let ror_data = r#"[
+        {
+            "id": "https://ror.org/test123",
+            "names": [
+                {"value": "Test Org", "types": ["alias"], "lang": "en"}
+            ]
+        }
+    ]"#;
+
+    std::fs::write(&ror_file, ror_data).unwrap();
+
+    let lookup = datacite_ror::reconcile::load_ror_data(&ror_file).unwrap();
+
+    assert_eq!(lookup.get("https://ror.org/test123"), Some(&"Test Org".to_string()));
+}

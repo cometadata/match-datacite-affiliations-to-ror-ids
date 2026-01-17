@@ -1,3 +1,6 @@
+mod ror_data;
+pub use ror_data::load_ror_data;
+
 use anyhow::Result;
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
