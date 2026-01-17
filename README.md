@@ -1,4 +1,4 @@
-# datacite-ror
+# match-datacite-affiliations-to-ror-ids
 
 CLI tool to extract the unique affiliation strings from the DataCite data, query them against the ROR API, and reconcile matches back to DOI/author records.
 
