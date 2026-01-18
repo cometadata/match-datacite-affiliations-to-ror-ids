@@ -52,7 +52,7 @@ class FileConfig:
     filename: str
     config_name: str
     is_json_array: bool = False
-    is_string_array: bool = False  # If True, wrap strings as {"affiliation": str}
+    is_string_array: bool = False
     shard_large: bool = False
 
 
@@ -62,6 +62,9 @@ FILE_CONFIGS = [
     FileConfig("ror_matches.jsonl", "ror_matches"),
     FileConfig("ror_matches.failed.jsonl", "ror_matches_failed"),
     FileConfig("unique_affiliations.json", "unique_affiliations", is_json_array=True, is_string_array=True),
+    FileConfig("existing_assignments.jsonl", "existing_assignments", shard_large=True),
+    FileConfig("existing_assignments_aggregated.jsonl", "existing_assignments_aggregated"),
+    FileConfig("disagreements.jsonl", "disagreements"),
 ]
 
 
@@ -126,6 +129,19 @@ def collect_stats(input_dir: Path) -> dict:
         "top_ror_ids": [],
         "error_distribution": {},
         "match_rate": 0.0,
+        "existing_assignments": {
+            "total_records": 0,
+            "unique_affiliations": 0,
+            "overlap_with_new_matches": 0,
+            "agreement_count": 0,
+            "agreement_rate": 0.0,
+        },
+        "disagreements": {
+            "total_count": 0,
+            "by_type": {},
+            "disagreement_rate": 0.0,
+            "top_patterns": [],
+        },
     }
 
     print("Collecting statistics...")
@@ -185,7 +201,100 @@ def collect_stats(input_dir: Path) -> dict:
         stats["error_distribution"] = dict(error_counter.most_common(10))
 
     stats["total_size_human"] = format_size(stats["total_size_bytes"])
+
+    collect_existing_assignment_stats(input_dir, stats)
+    collect_disagreement_stats(input_dir, stats)
+
+    overlap = stats["existing_assignments"].get("overlap_with_new_matches", 0)
+    disagreements = stats["disagreements"].get("total_count", 0)
+    if overlap > 0:
+        agreement_count = overlap - disagreements
+        stats["existing_assignments"]["agreement_count"] = agreement_count
+        stats["existing_assignments"]["agreement_rate"] = agreement_count / overlap
+        print(f"\n  Agreement rate: {agreement_count:,} / {overlap:,} = {stats['existing_assignments']['agreement_rate']:.2%}")
+
     return stats
+
+
+def collect_existing_assignment_stats(input_dir: Path, stats: dict) -> None:
+    """Collect statistics about pre-existing ROR assignments."""
+    agg_path = input_dir / "existing_assignments_aggregated.jsonl"
+    if not agg_path.exists():
+        print("\n  existing_assignments_aggregated.jsonl not found, skipping existing assignment stats")
+        return
+
+    print("\n  Collecting existing assignment statistics...")
+
+    existing_hashes = set()
+    total_records = 0
+
+    for record in tqdm(iter_jsonl(agg_path), desc="  Scanning aggregated assignments"):
+        existing_hashes.add(record.get("affiliation_hash"))
+        total_records += record.get("count", 1)
+
+    stats["existing_assignments"]["unique_affiliations"] = len(existing_hashes)
+    stats["existing_assignments"]["total_records"] = total_records
+
+    ror_matches_path = input_dir / "ror_matches.jsonl"
+    if ror_matches_path.exists():
+        overlap_count = 0
+        for record in tqdm(iter_jsonl(ror_matches_path), desc="  Calculating overlap with new matches"):
+            if record.get("affiliation_hash") in existing_hashes:
+                overlap_count += 1
+        stats["existing_assignments"]["overlap_with_new_matches"] = overlap_count
+        print(f"  Overlap with new matches: {overlap_count:,}")
+
+    print(f"  Unique affiliations with existing assignments: {len(existing_hashes):,}")
+    print(f"  Total existing assignment records: {total_records:,}")
+
+
+def collect_disagreement_stats(input_dir: Path, stats: dict) -> None:
+    """Collect statistics about disagreements between new and existing assignments."""
+    disagreements_path = input_dir / "disagreements.jsonl"
+    if not disagreements_path.exists():
+        print("\n  disagreements.jsonl not found, skipping disagreement stats")
+        return
+
+    print("\n  Collecting disagreement statistics...")
+
+    type_counter: Counter = Counter()
+    pattern_counter: Counter = Counter()
+
+    for record in tqdm(iter_jsonl(disagreements_path), desc="  Scanning disagreements"):
+        disagreement_type = record.get("type", "unknown")
+        type_counter[disagreement_type] += 1
+
+        if disagreement_type == "match":
+            existing_id = record.get("existing_ror_id", "unknown")
+            matched_id = record.get("matched_ror_id", "unknown")
+            existing_name = record.get("existing_ror_name", "")
+            matched_name = record.get("matched_ror_name", "")
+            pattern_counter[(existing_id, existing_name, matched_id, matched_name)] += 1
+
+    total_disagreements = sum(type_counter.values())
+    stats["disagreements"]["total_count"] = total_disagreements
+    stats["disagreements"]["by_type"] = dict(type_counter)
+
+    stats["disagreements"]["top_patterns"] = [
+        {
+            "existing_ror_id": existing_id,
+            "existing_ror_name": existing_name,
+            "matched_ror_id": matched_id,
+            "matched_ror_name": matched_name,
+            "count": count,
+        }
+        for (existing_id, existing_name, matched_id, matched_name), count
+        in pattern_counter.most_common(10)
+    ]
+
+    overlap = stats["existing_assignments"].get("overlap_with_new_matches", 0)
+    if overlap > 0:
+        stats["disagreements"]["disagreement_rate"] = total_disagreements / overlap
+
+    print(f"  Total disagreements: {total_disagreements:,}")
+    print(f"  By type: {dict(type_counter)}")
+    if overlap > 0:
+        print(f"  Disagreement rate: {total_disagreements:,} / {overlap:,} = {stats['disagreements']['disagreement_rate']:.2%}")
 
 
 def infer_schema_from_sample(filepath: Path, config: FileConfig, sample_size: int = 1000) -> pa.Schema:
@@ -315,6 +424,31 @@ def generate_readme(stats: dict, output_dir: Path) -> Path:
         error_rows.append(f"| {error_escaped} | {count:,} |")
     error_table = "\n".join(error_rows) if error_rows else "No data available"
 
+    existing_stats = stats.get("existing_assignments", {})
+    existing_total = existing_stats.get("total_records", 0)
+    existing_unique = existing_stats.get("unique_affiliations", 0)
+    existing_overlap = existing_stats.get("overlap_with_new_matches", 0)
+    existing_agreement_rate = existing_stats.get("agreement_rate", 0.0)
+
+    disagreement_stats = stats.get("disagreements", {})
+    disagreement_total = disagreement_stats.get("total_count", 0)
+    disagreement_rate = disagreement_stats.get("disagreement_rate", 0.0)
+    disagreement_by_type = disagreement_stats.get("by_type", {})
+    match_disagreements = disagreement_by_type.get("match", 0)
+    user_disagreements = disagreement_by_type.get("user", 0)
+
+    disagreement_pattern_rows = []
+    for pattern in disagreement_stats.get("top_patterns", [])[:10]:
+        existing_name = pattern.get("existing_ror_name", "")
+        existing_id = pattern.get("existing_ror_id", "")
+        matched_name = pattern.get("matched_ror_name", "")
+        matched_id = pattern.get("matched_ror_id", "")
+        count = pattern.get("count", 0)
+        existing_cell = f"{existing_name} ({existing_id})" if existing_name else existing_id
+        matched_cell = f"{matched_name} ({matched_id})" if matched_name else matched_id
+        disagreement_pattern_rows.append(f"| {existing_cell} | {matched_cell} | {count:,} |")
+    disagreement_pattern_table = "\n".join(disagreement_pattern_rows) if disagreement_pattern_rows else "No disagreements found"
+
     readme_content = f"""---
 license: cc0-1.0
 task_categories:
@@ -352,6 +486,18 @@ configs:
     data_files:
       - split: train
         path: data/unique_affiliations/*.parquet
+  - config_name: existing_assignments
+    data_files:
+      - split: train
+        path: data/existing_assignments/*.parquet
+  - config_name: existing_assignments_aggregated
+    data_files:
+      - split: train
+        path: data/existing_assignments_aggregated/*.parquet
+  - config_name: disagreements
+    data_files:
+      - split: train
+        path: data/disagreements/*.parquet
 ---
 
 # DataCite Affiliations Matched to ROR
@@ -420,6 +566,49 @@ List of all unique affiliation strings found in the dataset.
 **Schema:**
 - `affiliation` (string): Raw affiliation string
 
+### `existing_assignments`
+
+Pre-existing ROR assignments found in DataCite records. Each row represents one author-affiliation-ROR relationship that was already present in the source data.
+
+**Schema:**
+- `doi` (string): The DOI of the work
+- `author_idx` (int): Index of the author within the work
+- `author_name` (string): Name of the author
+- `affiliation` (string): Raw affiliation string
+- `ror_id` (string): Pre-existing ROR ID in the DataCite record
+- `ror_name` (string): Name of the ROR organization
+
+### `existing_assignments_aggregated`
+
+Aggregated view of pre-existing ROR assignments, grouped by affiliation string and ROR ID.
+
+**Schema:**
+- `affiliation` (string): Raw affiliation string
+- `affiliation_hash` (string): MD5 hash of the normalized affiliation string
+- `ror_id` (string): Pre-existing ROR ID
+- `ror_name` (string): Name of the ROR organization
+- `count` (int): Number of occurrences of this affiliation-ROR pair
+
+### `disagreements`
+
+Cases where the newly matched ROR ID differs from a pre-existing ROR assignment, or where multiple conflicting ROR IDs exist.
+
+**Schema (type="match"):**
+- `type` (string): "match" - disagreement between new match and existing assignment
+- `affiliation` (string): Raw affiliation string
+- `affiliation_hash` (string): MD5 hash of the normalized affiliation string
+- `existing_ror_id` (string): Pre-existing ROR ID in DataCite
+- `existing_ror_name` (string): Name of existing ROR organization
+- `existing_count` (int): Occurrences of this existing assignment
+- `matched_ror_id` (string): Newly matched ROR ID
+- `matched_ror_name` (string): Name of newly matched organization
+
+**Schema (type="user"):**
+- `type` (string): "user" - multiple conflicting user-submitted ROR IDs
+- `affiliation` (string): Raw affiliation string
+- `affiliation_hash` (string): MD5 hash of the normalized affiliation string
+- `ror_ids` (list): List of conflicting ROR assignments with counts
+
 ## Statistics
 
 ### Top 20 Most Common Matched ROR IDs
@@ -433,6 +622,30 @@ List of all unique affiliation strings found in the dataset.
 | Error Type | Count |
 |------------|-------|
 {error_table}
+
+### Existing Assignment Coverage
+
+| Metric | Value |
+|--------|-------|
+| Total records with existing ROR assignments | {existing_total:,} |
+| Unique affiliations with existing assignments | {existing_unique:,} |
+| Overlap with new matches | {existing_overlap:,} |
+| Agreement rate | {existing_agreement_rate:.2%} |
+
+### Disagreement Analysis
+
+| Metric | Value |
+|--------|-------|
+| Total disagreements | {disagreement_total:,} |
+| Disagreement rate | {disagreement_rate:.2%} |
+| Match-type disagreements | {match_disagreements:,} |
+| User-type disagreements | {user_disagreements:,} |
+
+### Top Disagreement Patterns
+
+| Existing ROR | Matched ROR | Count |
+|--------------|-------------|-------|
+{disagreement_pattern_table}
 
 ## Usage
 

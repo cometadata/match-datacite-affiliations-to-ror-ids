@@ -30,7 +30,6 @@ fn extract_affiliation_name(affiliation: &Value) -> Option<String> {
     }
 }
 
-/// Extracts ROR ID from affiliation if present and scheme is ROR
 fn extract_existing_ror_id(affiliation: &Value) -> Option<String> {
     match affiliation {
         Value::Object(_) => {

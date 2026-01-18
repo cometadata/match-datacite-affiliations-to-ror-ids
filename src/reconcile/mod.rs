@@ -115,17 +115,14 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
     let relationships_path = args.input.join("doi_author_affiliations.jsonl");
     let matches_path = args.input.join("ror_matches.jsonl");
 
-    // Load ROR data for name resolution
     eprintln!("Loading ROR data from {:?}...", args.ror_data);
     let ror_names = load_ror_data(&args.ror_data)?;
     eprintln!("Loaded {} ROR organizations", ror_names.len());
 
-    // Load our ROR matches
     eprintln!("Loading ROR matches from {:?}...", matches_path);
     let ror_lookup = load_ror_matches(&matches_path)?;
     eprintln!("Loaded {} ROR matches", ror_lookup.len());
 
-    // Count lines for progress bar
     let line_count = {
         let file = File::open(&relationships_path)?;
         BufReader::new(file).lines().count() as u64
@@ -138,15 +135,12 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
             .progress_chars("#>-"),
     );
 
-    // Tracking structures
     let mut existing_by_hash: HashMap<String, HashMap<String, usize>> = HashMap::new(); // hash -> (ror_id -> count)
     let mut affiliation_strings: HashMap<String, String> = HashMap::new(); // hash -> affiliation string
 
-    // For enriched records (records without existing ROR IDs)
     let mut current_doi: Option<String> = None;
     let mut current_group: Vec<AuthorAffiliationRecord> = Vec::new();
 
-    // Output files
     let output_dir = args.output.parent().unwrap_or(Path::new("."));
     let enriched_file = File::create(&args.output)?;
     let mut enriched_writer = BufWriter::new(enriched_file);
@@ -154,7 +148,6 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
     let existing_file = File::create(output_dir.join("existing_assignments.jsonl"))?;
     let mut existing_writer = BufWriter::new(existing_file);
 
-    // First pass: categorize records
     let input_file = File::open(&relationships_path)?;
     let reader = BufReader::new(input_file);
     let mut records_enriched = 0u64;
@@ -172,13 +165,11 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
             Err(_) => continue,
         };
 
-        // Track affiliation string for later
         affiliation_strings
             .entry(record.affiliation_hash.clone())
             .or_insert_with(|| record.affiliation.clone());
 
         if let Some(ref existing_ror_id) = record.existing_ror_id {
-            // Has existing ROR ID - track it
             let ror_name = ror_names
                 .get(existing_ror_id)
                 .cloned()
@@ -195,7 +186,6 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
             writeln!(existing_writer, "{}", serde_json::to_string(&assignment)?)?;
             records_existing += 1;
 
-            // Track for aggregation
             existing_by_hash
                 .entry(record.affiliation_hash.clone())
                 .or_default()
@@ -203,7 +193,6 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
                 .and_modify(|c| *c += 1)
                 .or_insert(1);
         } else {
-            // No existing ROR ID - process for enrichment
             let is_new_doi = current_doi.as_ref() != Some(&record.doi);
 
             if is_new_doi && !current_group.is_empty() {
@@ -223,7 +212,6 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
         }
     }
 
-    // Process final group
     if !current_group.is_empty() {
         if let Some(enriched) = process_doi_group(
             current_doi.as_ref().unwrap(),
@@ -239,7 +227,6 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
     enriched_writer.flush()?;
     existing_writer.flush()?;
 
-    // Write aggregated existing assignments
     let aggregated_file = File::create(output_dir.join("existing_assignments_aggregated.jsonl"))?;
     let mut aggregated_writer = BufWriter::new(aggregated_file);
 
@@ -263,7 +250,6 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
     }
     aggregated_writer.flush()?;
 
-    // Detect and write disagreements
     let disagreements_file = File::create(output_dir.join("disagreements.jsonl"))?;
     let mut disagreements_writer = BufWriter::new(disagreements_file);
     let mut user_disagreements = 0u64;
