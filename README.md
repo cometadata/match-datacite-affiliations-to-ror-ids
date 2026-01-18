@@ -102,10 +102,10 @@ datacite-ror query \
 
 ### Reconcile Command
 
-Reconcile ROR matches back to DOI/author records, producing enriched DataCite-compatible output.
+Reconcile ROR matches back to DOI/author records, producing enriched DataCite-compatible output. Handles existing ROR ID assignments and detects disagreements.
 
 ```bash
-datacite-ror reconcile --input <DIR> --output <FILE> [OPTIONS]
+datacite-ror reconcile --input <DIR> --output <FILE> --ror-data <FILE> [OPTIONS]
 ```
 
 #### Options
@@ -114,41 +114,30 @@ datacite-ror reconcile --input <DIR> --output <FILE> [OPTIONS]
 |--------|-------|-------------|---------|
 | `--input` | `-i` | Working directory (reads relationship and match files) | Required |
 | `--output` | `-o` | Output file path | `enriched_records.jsonl` |
+| `--ror-data` | `-r` | Path to ROR data dump JSON file | Required |
 
 #### Input Files Required
 
 - `doi_author_affiliations.jsonl` - From extract step
 - `ror_matches.jsonl` - From query step
+- ROR data dump JSON file - Download from [ROR Data Dumps](https://ror.readme.io/docs/data-dump)
 
-#### Output Format
+#### Output Files
 
-The output is a JSONL file where each line contains an enriched record:
-
-```json
-{
-  "doi": "10.1234/example",
-  "creators": [
-    {
-      "name": "Jane Smith",
-      "affiliation": [
-        {
-          "name": "Example University",
-          "affiliationIdentifier": "https://ror.org/0123456789",
-          "affiliationIdentifierScheme": "ROR",
-          "schemeUri": "https://ror.org"
-        }
-      ]
-    }
-  ]
-}
-```
+| File | Description |
+|------|-------------|
+| `enriched_records.jsonl` | DOIs enriched with ROR matches (affiliations without existing ROR IDs) |
+| `existing_assignments.jsonl` | Records where affiliation already had a ROR ID in source data |
+| `existing_assignments_aggregated.jsonl` | Aggregated counts per affiliation/ROR ID pair |
+| `disagreements.jsonl` | User disagreements (same affiliation → different ROR IDs) and match disagreements (existing differs from our match) |
 
 #### Example
 
 ```bash
 datacite-ror reconcile \
   --input /work/affiliations \
-  --output /work/enriched_records.jsonl
+  --output /work/enriched_records.jsonl \
+  --ror-data /data/ror/v1.63-2025-04-03-ror-data.json
 ```
 
 ## Full Pipeline Example
@@ -176,7 +165,8 @@ datacite-ror query \
 # Step 3: Reconcile matches to create enriched records
 datacite-ror reconcile \
   --input $WORK_DIR \
-  --output $WORK_DIR/enriched_datacite_records.jsonl
+  --output $WORK_DIR/enriched_datacite_records.jsonl \
+  --ror-data /data/ror/v1.63-2025-04-03-ror-data.json
 ```
 
 ## Intermediate File Formats
@@ -192,9 +182,12 @@ Each line contains a relationship record:
   "author_name": "Jane Smith",
   "affiliation_idx": 0,
   "affiliation": "Example University, City, Country",
-  "affiliation_hash": "a1b2c3d4e5f67890"
+  "affiliation_hash": "a1b2c3d4e5f67890",
+  "existing_ror_id": "https://ror.org/0123456789"
 }
 ```
+
+The `existing_ror_id` field is present when the source affiliation already had a ROR ID assigned (via `affiliationIdentifier` with scheme "ROR"). It is omitted when no existing ROR ID was present.
 
 ### ror_matches.jsonl
 
