@@ -1,0 +1,10 @@
+contributors:
+  - name: "COMET"
+    nameType: "Organizational"
+    contributorType: "Producer"
+
+resources:
+  - relatedIdentifier: "https://huggingface.co/datasets/cometadata/datacite-affiliations-matched-ror-ids-datacite-enrichment-format"
+    relatedIdentifierType: "URL"
+    relationType: "IsDerivedFrom"
+    resourceTypeGeneral: "Dataset"

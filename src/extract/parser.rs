@@ -68,6 +68,19 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
             None => continue,
         };
 
+        let author_name_type = creator
+            .get("nameType")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let author_given_name = creator
+            .get("givenName")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let author_family_name = creator
+            .get("familyName")
+            .and_then(Value::as_str)
+            .map(String::from);
+
         let affiliations = match creator.get("affiliation") {
             Some(Value::Array(arr)) => arr,
             _ => continue,
@@ -80,6 +93,9 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
                         doi: doi.clone(),
                         author_idx,
                         author_name: author_name.clone(),
+                        author_name_type: author_name_type.clone(),
+                        author_given_name: author_given_name.clone(),
+                        author_family_name: author_family_name.clone(),
                         affiliation_idx,
                         affiliation: affiliation_name.clone(),
                         affiliation_hash: hash_affiliation(&affiliation_name),

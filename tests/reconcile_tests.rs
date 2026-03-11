@@ -59,6 +59,9 @@ fn test_reconcile_full_pipeline() {
             doi: "10.1234/test".to_string(),
             author_idx: 0,
             author_name: "Doe, Jane".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "abc123".to_string(),
@@ -68,6 +71,9 @@ fn test_reconcile_full_pipeline() {
             doi: "10.1234/test".to_string(),
             author_idx: 0,
             author_name: "Doe, Jane".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 1,
             affiliation: "Unknown Institution".to_string(),
             affiliation_hash: "unknown".to_string(),
@@ -77,6 +83,9 @@ fn test_reconcile_full_pipeline() {
             doi: "10.1234/test".to_string(),
             author_idx: 1,
             author_name: "Smith, John".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "MIT".to_string(),
             affiliation_hash: "def456".to_string(),
@@ -87,6 +96,9 @@ fn test_reconcile_full_pipeline() {
             doi: "10.1234/test".to_string(),
             author_idx: 2,
             author_name: "No Match Author".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "No Match Univ".to_string(),
             affiliation_hash: "nomatch".to_string(),
@@ -115,8 +127,10 @@ fn test_reconcile_full_pipeline() {
     // Run reconcile
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
-        output: output_file.clone(),
+        output: Some(output_file.clone()),
         ror_data: ror_data_file,
+        enrichment_format: false,
+        enrichment_config: None,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -161,6 +175,9 @@ fn test_reconcile_skips_doi_with_no_matches() {
             doi: "10.1234/nomatch".to_string(),
             author_idx: 0,
             author_name: "Author".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "Unknown".to_string(),
             affiliation_hash: "unknown".to_string(),
@@ -185,8 +202,10 @@ fn test_reconcile_skips_doi_with_no_matches() {
     // Run reconcile
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
-        output: output_file.clone(),
+        output: Some(output_file.clone()),
         ror_data: ror_data_file,
+        enrichment_format: false,
+        enrichment_config: None,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -269,6 +288,9 @@ fn test_reconcile_excludes_existing_ror_ids_from_enriched() {
             doi: "10.1234/test".to_string(),
             author_idx: 0,
             author_name: "Doe, Jane".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "abc123".to_string(),
@@ -278,6 +300,9 @@ fn test_reconcile_excludes_existing_ror_ids_from_enriched() {
             doi: "10.1234/test".to_string(),
             author_idx: 1,
             author_name: "Smith, John".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "MIT".to_string(),
             affiliation_hash: "def456".to_string(),
@@ -303,8 +328,10 @@ fn test_reconcile_excludes_existing_ror_ids_from_enriched() {
     // Run reconcile
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
-        output: output_file.clone(),
+        output: Some(output_file.clone()),
         ror_data: ror_data_file,
+        enrichment_format: false,
+        enrichment_config: None,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -338,6 +365,9 @@ fn test_reconcile_writes_existing_assignments() {
             doi: "10.1234/test1".to_string(),
             author_idx: 0,
             author_name: "Doe, Jane".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "abc123".to_string(),
@@ -347,6 +377,9 @@ fn test_reconcile_writes_existing_assignments() {
             doi: "10.1234/test2".to_string(),
             author_idx: 0,
             author_name: "Smith, John".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "abc123".to_string(),
@@ -368,8 +401,10 @@ fn test_reconcile_writes_existing_assignments() {
     let output_file = output_dir.join("enriched.jsonl");
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
-        output: output_file,
+        output: Some(output_file),
         ror_data: ror_data_file,
+        enrichment_format: false,
+        enrichment_config: None,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -425,6 +460,9 @@ fn test_reconcile_detects_user_disagreements() {
             doi: "10.1234/test1".to_string(),
             author_idx: 0,
             author_name: "Author 1".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "Ambiguous Org".to_string(),
             affiliation_hash: "ambig123".to_string(),
@@ -434,6 +472,9 @@ fn test_reconcile_detects_user_disagreements() {
             doi: "10.1234/test2".to_string(),
             author_idx: 0,
             author_name: "Author 2".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "Ambiguous Org".to_string(),
             affiliation_hash: "ambig123".to_string(),
@@ -454,8 +495,10 @@ fn test_reconcile_detects_user_disagreements() {
     let output_file = output_dir.join("enriched.jsonl");
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
-        output: output_file,
+        output: Some(output_file),
         ror_data: ror_file,
+        enrichment_format: false,
+        enrichment_config: None,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -496,6 +539,9 @@ fn test_reconcile_detects_match_disagreements() {
             doi: "10.1234/test".to_string(),
             author_idx: 0,
             author_name: "Author".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
             affiliation_idx: 0,
             affiliation: "Some Org".to_string(),
             affiliation_hash: "some123".to_string(),
@@ -520,8 +566,10 @@ fn test_reconcile_detects_match_disagreements() {
     let output_file = output_dir.join("enriched.jsonl");
     let args = datacite_ror::reconcile::ReconcileArgs {
         input: input_dir,
-        output: output_file,
+        output: Some(output_file),
         ror_data: ror_file,
+        enrichment_format: false,
+        enrichment_config: None,
     };
     datacite_ror::reconcile::run(args).unwrap();
 
@@ -545,4 +593,156 @@ fn test_reconcile_detects_match_disagreements() {
         }
         _ => panic!("Expected Match disagreement"),
     }
+}
+
+#[test]
+fn test_reconcile_enrichment_format() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_file = temp_dir.path().join("enrichments.jsonl");
+    std::fs::create_dir_all(&input_dir).unwrap();
+
+    // Create doi_author_affiliations.jsonl with two authors for one DOI
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 0,
+            author_name: "Doe, Jane".to_string(),
+            author_name_type: Some("Personal".to_string()),
+            author_given_name: Some("Jane".to_string()),
+            author_family_name: Some("Doe".to_string()),
+            affiliation_idx: 0,
+            affiliation: "University of Oxford".to_string(),
+            affiliation_hash: "abc123".to_string(),
+            existing_ror_id: None,
+        },
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 1,
+            author_name: "Smith, John".to_string(),
+            author_name_type: Some("Personal".to_string()),
+            author_given_name: Some("John".to_string()),
+            author_family_name: Some("Smith".to_string()),
+            affiliation_idx: 0,
+            affiliation: "MIT".to_string(),
+            affiliation_hash: "def456".to_string(),
+            existing_ror_id: None,
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    {
+        let mut file = File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+        writeln!(file, r#"{{"affiliation":"University of Oxford","affiliation_hash":"abc123","ror_id":"https://ror.org/052gg0110"}}"#).unwrap();
+        writeln!(file, r#"{{"affiliation":"MIT","affiliation_hash":"def456","ror_id":"https://ror.org/042nb2s44"}}"#).unwrap();
+    }
+
+    let ror_data_file = create_minimal_ror_data(temp_dir.path());
+
+    // Create enrichment config YAML
+    let config_file = temp_dir.path().join("enrichment_config.yaml");
+    std::fs::write(
+        &config_file,
+        r#"contributors:
+  - name: "COMET"
+    nameType: "Organizational"
+    contributorType: "Producer"
+resources:
+  - relatedIdentifier: "http://doi.org/10.82461/160e-8q92"
+    relatedIdentifierType: "DOI"
+    relationType: "IsDocumentedBy"
+    resourceTypeGeneral: "Project"
+"#,
+    )
+    .unwrap();
+
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: Some(output_file.clone()),
+        ror_data: ror_data_file,
+        enrichment_format: true,
+        enrichment_config: Some(config_file),
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    // Should produce one record per author (2 records), not one per DOI
+    let content = std::fs::read_to_string(&output_file).unwrap();
+    let records: Vec<serde_json::Value> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    assert_eq!(records.len(), 2);
+
+    // Validate every record against the DataCite enrichment input schema
+    let schema_str = include_str!("../enrichment_input_schema.json");
+    let schema: serde_json::Value = serde_json::from_str(schema_str).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+
+    for (i, rec) in records.iter().enumerate() {
+        let errors: Vec<String> = validator
+            .iter_errors(rec)
+            .map(|e| format!("  - {} (at {})", e, e.instance_path))
+            .collect();
+        if !errors.is_empty() {
+            panic!(
+                "Record {} failed schema validation:\n{}",
+                i,
+                errors.join("\n")
+            );
+        }
+    }
+
+    // Check first record structure
+    let rec = &records[0];
+    assert_eq!(rec["doi"], "10.1234/test");
+    assert_eq!(rec["field"], "creators");
+    assert_eq!(rec["action"], "updateChild");
+
+    // originalValue should include full creator fields with original affiliations
+    assert_eq!(rec["originalValue"]["name"], "Doe, Jane");
+    assert_eq!(rec["originalValue"]["nameType"], "Personal");
+    assert_eq!(rec["originalValue"]["givenName"], "Jane");
+    assert_eq!(rec["originalValue"]["familyName"], "Doe");
+    let orig_affs = rec["originalValue"]["affiliation"].as_array().unwrap();
+    assert_eq!(orig_affs.len(), 1);
+    assert_eq!(orig_affs[0]["name"], "University of Oxford");
+    assert!(orig_affs[0].get("affiliationIdentifier").is_none()); // no ROR in original
+
+    // enrichedValue should include the same fields with ROR-enriched affiliations
+    assert_eq!(rec["enrichedValue"]["name"], "Doe, Jane");
+    assert_eq!(rec["enrichedValue"]["nameType"], "Personal");
+    assert_eq!(rec["enrichedValue"]["givenName"], "Jane");
+    assert_eq!(rec["enrichedValue"]["familyName"], "Doe");
+
+    let affiliations = rec["enrichedValue"]["affiliation"].as_array().unwrap();
+    assert_eq!(affiliations.len(), 1);
+    assert_eq!(affiliations[0]["name"], "University of Oxford");
+    assert_eq!(affiliations[0]["affiliationIdentifier"], "https://ror.org/052gg0110");
+    assert_eq!(affiliations[0]["affiliationIdentifierScheme"], "ROR");
+    assert_eq!(affiliations[0]["schemeUri"], "https://ror.org");
+
+    // Check contributors metadata
+    let contributors = rec["contributors"].as_array().unwrap();
+    assert_eq!(contributors[0]["name"], "COMET");
+    assert_eq!(contributors[0]["nameType"], "Organizational");
+    assert_eq!(contributors[0]["contributorType"], "Producer");
+
+    // Check resources metadata
+    let resources = rec["resources"].as_array().unwrap();
+    assert_eq!(resources[0]["relatedIdentifier"], "http://doi.org/10.82461/160e-8q92");
+    assert_eq!(resources[0]["relatedIdentifierType"], "DOI");
+
+    // Check second record
+    let rec2 = &records[1];
+    assert_eq!(rec2["originalValue"]["name"], "Smith, John");
+    assert_eq!(rec2["enrichedValue"]["affiliation"][0]["affiliationIdentifier"], "https://ror.org/042nb2s44");
 }
