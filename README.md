@@ -113,8 +113,10 @@ datacite-ror reconcile --input <DIR> --output <FILE> --ror-data <FILE> [OPTIONS]
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
 | `--input` | `-i` | Working directory (reads relationship and match files) | Required |
-| `--output` | `-o` | Output file path | `enriched_records.jsonl` |
+| `--output` | `-o` | Output file path | `enriched_records.jsonl` or `enrichments.jsonl` |
 | `--ror-data` | `-r` | Path to ROR data dump JSON file | Required |
+| `--enrichment-format` | | Output in DataCite enrichment format (per-creator records) | false |
+| `--enrichment-config` | | Path to enrichment config YAML file (required with `--enrichment-format`) | |
 
 #### Input Files Required
 
@@ -126,18 +128,48 @@ datacite-ror reconcile --input <DIR> --output <FILE> --ror-data <FILE> [OPTIONS]
 
 | File | Description |
 |------|-------------|
-| `enriched_records.jsonl` | DOIs enriched with ROR matches (affiliations without existing ROR IDs) |
+| `enriched_records.jsonl` | DOIs enriched with ROR matches (default format, one record per DOI) |
+| `enrichments.jsonl` | Per-creator enrichment records in [DataCite enrichment format](https://github.com/cometadata/datacite-enrichment) (when `--enrichment-format` is used) |
 | `existing_assignments.jsonl` | Records where affiliation already had a ROR ID in source data |
 | `existing_assignments_aggregated.jsonl` | Aggregated counts per affiliation/ROR ID pair |
 | `disagreements.jsonl` | User disagreements (same affiliation → different ROR IDs) and match disagreements (existing differs from our match) |
 
-#### Example
+#### Enrichment Config File
+
+When using `--enrichment-format`, a YAML config file is required with `contributors` and `resources` arrays that provide provenance metadata for each enrichment record:
+
+```yaml
+contributors:
+  - name: "COMET"
+    nameType: "Organizational"
+    contributorType: "Producer"
+
+resources:
+  - relatedIdentifier: "https://example.com/dataset"
+    relatedIdentifierType: "URL"
+    relationType: "IsDerivedFrom"
+    resourceTypeGeneral: "Dataset"
+```
+
+#### Examples
+
+Default format (one record per DOI):
 
 ```bash
 datacite-ror reconcile \
   --input /work/affiliations \
   --output /work/enriched_records.jsonl \
-  --ror-data /data/ror/v1.63-2025-04-03-ror-data.json
+  --ror-data /data/ror/v2.3-2026-02-24-ror-data.json
+```
+
+DataCite enrichment format (one record per creator):
+
+```bash
+datacite-ror reconcile \
+  --input /work/affiliations \
+  --ror-data /data/ror/v2.3-2026-02-24-ror-data.json \
+  --enrichment-format \
+  --enrichment-config enrichment_config.yaml
 ```
 
 ## Full Pipeline Example
@@ -166,7 +198,14 @@ datacite-ror query \
 datacite-ror reconcile \
   --input $WORK_DIR \
   --output $WORK_DIR/enriched_datacite_records.jsonl \
-  --ror-data /data/ror/v1.63-2025-04-03-ror-data.json
+  --ror-data /data/ror/v2.3-2026-02-24-ror-data.json
+
+# Or, output in DataCite enrichment format
+datacite-ror reconcile \
+  --input $WORK_DIR \
+  --ror-data /data/ror/v2.3-2026-02-24-ror-data.json \
+  --enrichment-format \
+  --enrichment-config enrichment_config.yaml
 ```
 
 ## Intermediate File Formats
@@ -180,6 +219,9 @@ Each line contains a relationship record:
   "doi": "10.1234/example",
   "author_idx": 0,
   "author_name": "Jane Smith",
+  "author_name_type": "Personal",
+  "author_given_name": "Jane",
+  "author_family_name": "Smith",
   "affiliation_idx": 0,
   "affiliation": "Example University, City, Country",
   "affiliation_hash": "a1b2c3d4e5f67890",
@@ -187,7 +229,7 @@ Each line contains a relationship record:
 }
 ```
 
-The `existing_ror_id` field is present when the source affiliation already had a ROR ID assigned (via `affiliationIdentifier` with scheme "ROR"). It is omitted when no existing ROR ID was present.
+The `author_name_type`, `author_given_name`, `author_family_name`, and `existing_ror_id` fields are optional and omitted when not present in the source data.
 
 ### ror_matches.jsonl
 
