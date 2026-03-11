@@ -14,6 +14,12 @@ pub struct AuthorAffiliationRecord {
     pub doi: String,
     pub author_idx: usize,
     pub author_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_name_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_given_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_family_name: Option<String>,
     pub affiliation_idx: usize,
     pub affiliation: String,
     pub affiliation_hash: String,
@@ -84,6 +90,43 @@ pub struct RorIdCount {
     pub ror_id: String,
     pub ror_name: String,
     pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrichmentContributor {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_type: Option<String>,
+    pub contributor_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrichmentResource {
+    pub related_identifier: String,
+    pub related_identifier_type: String,
+    pub relation_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_type_general: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichmentConfig {
+    pub contributors: Vec<EnrichmentContributor>,
+    pub resources: Vec<EnrichmentResource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrichmentOutputRecord {
+    pub doi: String,
+    pub contributors: Vec<EnrichmentContributor>,
+    pub resources: Vec<EnrichmentResource>,
+    pub field: String,
+    pub action: String,
+    pub original_value: serde_json::Value,
+    pub enriched_value: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     AuthorAffiliationRecord, Disagreement, EnrichedAffiliation, EnrichedCreator, EnrichedRecord,
-    ExistingAssignment, ExistingAssignmentAggregated, RorIdCount, RorMatch,
+    EnrichmentConfig, EnrichmentOutputRecord, ExistingAssignment, ExistingAssignmentAggregated,
+    RorIdCount, RorMatch,
 };
 
 #[derive(Args)]
@@ -21,12 +22,21 @@ pub struct ReconcileArgs {
     pub input: PathBuf,
 
     /// Output file for enriched records
-    #[arg(short, long, default_value = "enriched_records.jsonl")]
-    pub output: PathBuf,
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
 
     /// Path to ROR data dump JSON file
     #[arg(short, long)]
     pub ror_data: PathBuf,
+
+    /// Output in DataCite enrichment format
+    #[arg(long)]
+    pub enrichment_format: bool,
+
+    /// Path to enrichment config YAML file (required with --enrichment-format).
+    /// Must contain "contributors" and "resources" arrays.
+    #[arg(long)]
+    pub enrichment_config: Option<PathBuf>,
 }
 
 pub fn load_ror_matches<P: AsRef<Path>>(path: P) -> Result<HashMap<String, String>> {
@@ -48,9 +58,17 @@ pub fn load_ror_matches<P: AsRef<Path>>(path: P) -> Result<HashMap<String, Strin
     Ok(lookup)
 }
 
+struct AffiliationData {
+    name: String,
+    ror_id: Option<String>, // None if no ROR match
+}
+
 struct AuthorData {
     name: String,
-    affiliations: Vec<(String, String, String)>, // (name, hash, ror_id)
+    name_type: Option<String>,
+    given_name: Option<String>,
+    family_name: Option<String>,
+    affiliations: Vec<AffiliationData>,
 }
 
 /// Returns None if no authors have matched affiliations
@@ -65,37 +83,40 @@ fn process_doi_group(
     for record in records {
         let author_entry = authors.entry(record.author_idx).or_insert_with(|| AuthorData {
             name: record.author_name.clone(),
+            name_type: record.author_name_type.clone(),
+            given_name: record.author_given_name.clone(),
+            family_name: record.author_family_name.clone(),
             affiliations: Vec::new(),
         });
 
-        if let Some(ror_id) = ror_lookup.get(&record.affiliation_hash) {
-            author_entry.affiliations.push((
-                record.affiliation.clone(),
-                record.affiliation_hash.clone(),
-                ror_id.clone(),
-            ));
-        }
+        let ror_id = ror_lookup.get(&record.affiliation_hash).cloned();
+        author_entry.affiliations.push(AffiliationData {
+            name: record.affiliation.clone(),
+            ror_id,
+        });
     }
 
     let creators: Vec<EnrichedCreator> = authors
         .into_values()
-        .filter(|author| !author.affiliations.is_empty())
+        .filter(|author| author.affiliations.iter().any(|a| a.ror_id.is_some()))
         .map(|author| {
             let affiliations: Vec<EnrichedAffiliation> = author
                 .affiliations
                 .into_iter()
-                .map(|(name, _hash, ror_id)| EnrichedAffiliation {
-                    name,
-                    affiliation_identifier: ror_id,
-                    affiliation_identifier_scheme: "ROR".to_string(),
-                    scheme_uri: "https://ror.org".to_string(),
+                .filter_map(|a| {
+                    a.ror_id.map(|ror_id| EnrichedAffiliation {
+                        name: a.name,
+                        affiliation_identifier: ror_id,
+                        affiliation_identifier_scheme: "ROR".to_string(),
+                        scheme_uri: "https://ror.org".to_string(),
+                    })
                 })
                 .collect();
 
             EnrichedCreator {
                 name: author.name,
-                given_name: None,
-                family_name: None,
+                given_name: author.given_name,
+                family_name: author.family_name,
                 affiliation: affiliations,
             }
         })
@@ -111,9 +132,119 @@ fn process_doi_group(
     }
 }
 
+/// Build a creator JSON object with name fields, optionally including affiliations
+fn build_creator_value(
+    author: &AuthorData,
+    affiliations: Option<Vec<serde_json::Value>>,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    if let Some(ref nt) = author.name_type {
+        obj.insert("nameType".to_string(), serde_json::json!(nt));
+    }
+    if let Some(ref gn) = author.given_name {
+        obj.insert("givenName".to_string(), serde_json::json!(gn));
+    }
+    if let Some(ref fn_) = author.family_name {
+        obj.insert("familyName".to_string(), serde_json::json!(fn_));
+    }
+    obj.insert("name".to_string(), serde_json::json!(&author.name));
+    if let Some(affs) = affiliations {
+        obj.insert("affiliation".to_string(), serde_json::json!(affs));
+    }
+    serde_json::Value::Object(obj)
+}
+
+/// Returns one EnrichmentOutputRecord per author with matched affiliations
+fn process_doi_group_enrichment(
+    doi: &str,
+    records: &[AuthorAffiliationRecord],
+    ror_lookup: &HashMap<String, String>,
+    config: &EnrichmentConfig,
+) -> Vec<EnrichmentOutputRecord> {
+    let mut authors: BTreeMap<usize, AuthorData> = BTreeMap::new();
+
+    for record in records {
+        let author_entry = authors.entry(record.author_idx).or_insert_with(|| AuthorData {
+            name: record.author_name.clone(),
+            name_type: record.author_name_type.clone(),
+            given_name: record.author_given_name.clone(),
+            family_name: record.author_family_name.clone(),
+            affiliations: Vec::new(),
+        });
+
+        let ror_id = ror_lookup.get(&record.affiliation_hash).cloned();
+        author_entry.affiliations.push(AffiliationData {
+            name: record.affiliation.clone(),
+            ror_id,
+        });
+    }
+
+    authors
+        .into_values()
+        .filter(|author| author.affiliations.iter().any(|a| a.ror_id.is_some()))
+        .map(|author| {
+            // originalValue: creator with original affiliations (name only)
+            let original_affiliations: Vec<serde_json::Value> = author
+                .affiliations
+                .iter()
+                .map(|a| serde_json::json!({ "name": a.name }))
+                .collect();
+
+            // enrichedValue: creator with ROR-enriched affiliations
+            let enriched_affiliations: Vec<serde_json::Value> = author
+                .affiliations
+                .iter()
+                .map(|a| {
+                    if let Some(ref ror_id) = a.ror_id {
+                        serde_json::json!({
+                            "name": a.name,
+                            "affiliationIdentifier": ror_id,
+                            "affiliationIdentifierScheme": "ROR",
+                            "schemeUri": "https://ror.org"
+                        })
+                    } else {
+                        serde_json::json!({ "name": a.name })
+                    }
+                })
+                .collect();
+
+            let original_value = build_creator_value(&author, Some(original_affiliations));
+            let enriched_value = build_creator_value(&author, Some(enriched_affiliations));
+
+            EnrichmentOutputRecord {
+                doi: doi.to_string(),
+                contributors: config.contributors.clone(),
+                resources: config.resources.clone(),
+                field: "creators".to_string(),
+                action: "updateChild".to_string(),
+                original_value,
+                enriched_value,
+            }
+        })
+        .collect()
+}
+
 pub fn run(args: ReconcileArgs) -> Result<()> {
     let relationships_path = args.input.join("doi_author_affiliations.jsonl");
     let matches_path = args.input.join("ror_matches.jsonl");
+
+    let enrichment_config = if args.enrichment_format {
+        let config_path = args.enrichment_config.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("--enrichment-config is required when using --enrichment-format")
+        })?;
+        let config_str = std::fs::read_to_string(config_path)?;
+        let config: EnrichmentConfig = serde_yaml::from_str(&config_str)?;
+        Some(config)
+    } else {
+        None
+    };
+
+    let default_output = if args.enrichment_format {
+        PathBuf::from("enrichments.jsonl")
+    } else {
+        PathBuf::from("enriched_records.jsonl")
+    };
+    let output_path = args.output.unwrap_or(default_output);
 
     eprintln!("Loading ROR data from {:?}...", args.ror_data);
     let ror_names = load_ror_data(&args.ror_data)?;
@@ -141,8 +272,8 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
     let mut current_doi: Option<String> = None;
     let mut current_group: Vec<AuthorAffiliationRecord> = Vec::new();
 
-    let output_dir = args.output.parent().unwrap_or(Path::new("."));
-    let enriched_file = File::create(&args.output)?;
+    let output_dir = output_path.parent().unwrap_or(Path::new("."));
+    let enriched_file = File::create(&output_path)?;
     let mut enriched_writer = BufWriter::new(enriched_file);
 
     let existing_file = File::create(output_dir.join("existing_assignments.jsonl"))?;
@@ -196,7 +327,18 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
             let is_new_doi = current_doi.as_ref() != Some(&record.doi);
 
             if is_new_doi && !current_group.is_empty() {
-                if let Some(enriched) = process_doi_group(
+                if let Some(ref config) = enrichment_config {
+                    let enrichments = process_doi_group_enrichment(
+                        current_doi.as_ref().unwrap(),
+                        &current_group,
+                        &ror_lookup,
+                        config,
+                    );
+                    for enrichment in &enrichments {
+                        writeln!(enriched_writer, "{}", serde_json::to_string(enrichment)?)?;
+                    }
+                    records_enriched += enrichments.len() as u64;
+                } else if let Some(enriched) = process_doi_group(
                     current_doi.as_ref().unwrap(),
                     &current_group,
                     &ror_lookup,
@@ -213,7 +355,18 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
     }
 
     if !current_group.is_empty() {
-        if let Some(enriched) = process_doi_group(
+        if let Some(ref config) = enrichment_config {
+            let enrichments = process_doi_group_enrichment(
+                current_doi.as_ref().unwrap(),
+                &current_group,
+                &ror_lookup,
+                config,
+            );
+            for enrichment in &enrichments {
+                writeln!(enriched_writer, "{}", serde_json::to_string(enrichment)?)?;
+            }
+            records_enriched += enrichments.len() as u64;
+        } else if let Some(enriched) = process_doi_group(
             current_doi.as_ref().unwrap(),
             &current_group,
             &ror_lookup,
@@ -314,7 +467,7 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
     );
     eprintln!(
         "\nOutput files:\n  {:?}\n  {:?}\n  {:?}\n  {:?}",
-        args.output,
+        output_path,
         output_dir.join("existing_assignments.jsonl"),
         output_dir.join("existing_assignments_aggregated.jsonl"),
         output_dir.join("disagreements.jsonl")
