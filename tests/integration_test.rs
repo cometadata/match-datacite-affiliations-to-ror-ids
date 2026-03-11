@@ -97,8 +97,10 @@ async fn test_full_pipeline_extract_query_reconcile() {
     // Step 3: Reconcile
     let reconcile_args = datacite_ror::reconcile::ReconcileArgs {
         input: work_dir.clone(),
-        output: output_file.clone(),
+        output: Some(output_file.clone()),
         ror_data: ror_data_file,
+        enrichment_format: false,
+        enrichment_config: None,
     };
     datacite_ror::reconcile::run(reconcile_args).unwrap();
 

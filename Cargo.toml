@@ -15,6 +15,7 @@ rayon = "1.10"
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -22,6 +23,7 @@ urlencoding = "2.1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
+jsonschema = "0.28"
 tempfile = "3"
 tokio-test = "0.4"
 wiremock = "0.6"
