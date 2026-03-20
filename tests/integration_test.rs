@@ -28,7 +28,7 @@ async fn test_full_pipeline_extract_query_reconcile() {
 
     // Create test DataCite records
     let records = vec![
-        r#"{"id":"10.1234/paper1","attributes":{"doi":"10.1234/paper1","creators":[{"name":"Author One","affiliation":[{"name":"Harvard University"}]}]}}"#,
+        r#"{"id":"10.1234/paper1","attributes":{"doi":"10.1234/paper1","creators":[{"name":"Author One","nameIdentifiers":[{"nameIdentifier":"0000-0001-0000-0001","nameIdentifierScheme":"ORCID","schemeUri":"https://orcid.org"}],"affiliation":[{"name":"Harvard University"}]}]}}"#,
         r#"{"id":"10.1234/paper2","attributes":{"doi":"10.1234/paper2","creators":[{"name":"Author Two","affiliation":[{"name":"Stanford University"}]},{"name":"Author Three","affiliation":[{"name":"Harvard University"}]}]}}"#,
     ];
     create_test_datacite_file(&data_dir, "test.jsonl.gz", &records.join("\n"));
