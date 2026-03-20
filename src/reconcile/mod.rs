@@ -70,6 +70,7 @@ struct AuthorData {
     given_name: Option<String>,
     family_name: Option<String>,
     name_identifiers: Option<Vec<serde_json::Value>>,
+    creator_raw: Option<serde_json::Value>,
     affiliations: Vec<AffiliationData>,
 }
 
@@ -89,6 +90,7 @@ fn process_doi_group(
             given_name: record.author_given_name.clone(),
             family_name: record.author_family_name.clone(),
             name_identifiers: record.author_name_identifiers.clone(),
+            creator_raw: record.creator_raw.clone(),
             affiliations: Vec::new(),
         });
 
@@ -141,20 +143,29 @@ fn build_creator_value(
     author: &AuthorData,
     affiliations: Option<Vec<serde_json::Value>>,
 ) -> serde_json::Value {
-    let mut obj = serde_json::Map::new();
-    if let Some(ref nt) = author.name_type {
-        obj.insert("nameType".to_string(), serde_json::json!(nt));
-    }
-    if let Some(ref gn) = author.given_name {
-        obj.insert("givenName".to_string(), serde_json::json!(gn));
-    }
-    if let Some(ref fn_) = author.family_name {
-        obj.insert("familyName".to_string(), serde_json::json!(fn_));
-    }
-    obj.insert("name".to_string(), serde_json::json!(&author.name));
-    if let Some(ref ni) = author.name_identifiers {
-        obj.insert("nameIdentifiers".to_string(), serde_json::json!(ni));
-    }
+    let mut obj = if let Some(ref raw) = author.creator_raw {
+        match raw.as_object() {
+            Some(map) => map.clone(),
+            None => serde_json::Map::new(),
+        }
+    } else {
+        // Fallback for records without creator_raw
+        let mut obj = serde_json::Map::new();
+        if let Some(ref nt) = author.name_type {
+            obj.insert("nameType".to_string(), serde_json::json!(nt));
+        }
+        if let Some(ref gn) = author.given_name {
+            obj.insert("givenName".to_string(), serde_json::json!(gn));
+        }
+        if let Some(ref fn_) = author.family_name {
+            obj.insert("familyName".to_string(), serde_json::json!(fn_));
+        }
+        obj.insert("name".to_string(), serde_json::json!(&author.name));
+        if let Some(ref ni) = author.name_identifiers {
+            obj.insert("nameIdentifiers".to_string(), serde_json::json!(ni));
+        }
+        obj
+    };
     if let Some(affs) = affiliations {
         obj.insert("affiliation".to_string(), serde_json::json!(affs));
     }
@@ -177,6 +188,7 @@ fn process_doi_group_enrichment(
             given_name: record.author_given_name.clone(),
             family_name: record.author_family_name.clone(),
             name_identifiers: record.author_name_identifiers.clone(),
+            creator_raw: record.creator_raw.clone(),
             affiliations: Vec::new(),
         });
 
