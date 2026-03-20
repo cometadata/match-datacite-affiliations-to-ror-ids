@@ -80,6 +80,10 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
             .get("familyName")
             .and_then(Value::as_str)
             .map(String::from);
+        let author_name_identifiers: Option<Vec<serde_json::Value>> = creator
+            .get("nameIdentifiers")
+            .and_then(Value::as_array)
+            .cloned();
 
         let affiliations = match creator.get("affiliation") {
             Some(Value::Array(arr)) => arr,
@@ -89,6 +93,10 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
         for (affiliation_idx, affiliation) in affiliations.iter().enumerate() {
             if let Some(affiliation_name) = extract_affiliation_name(affiliation) {
                 if !affiliation_name.is_empty() {
+                    let affiliation_raw = match affiliation {
+                        Value::Object(_) => Some(affiliation.clone()),
+                        _ => None,
+                    };
                     results.push(AuthorAffiliationRecord {
                         doi: doi.clone(),
                         author_idx,
@@ -96,11 +104,11 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
                         author_name_type: author_name_type.clone(),
                         author_given_name: author_given_name.clone(),
                         author_family_name: author_family_name.clone(),
-                        author_name_identifiers: None, // populated in Task 2
+                        author_name_identifiers: author_name_identifiers.clone(),
                         affiliation_idx,
                         affiliation: affiliation_name.clone(),
                         affiliation_hash: hash_affiliation(&affiliation_name),
-                        affiliation_raw: None, // populated in Task 2
+                        affiliation_raw,
                         existing_ror_id: extract_existing_ror_id(affiliation),
                     });
                 }
