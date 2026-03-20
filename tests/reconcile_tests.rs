@@ -635,11 +635,17 @@ fn test_reconcile_enrichment_format() {
             author_name_type: Some("Personal".to_string()),
             author_given_name: Some("Jane".to_string()),
             author_family_name: Some("Doe".to_string()),
-            author_name_identifiers: None,
+            author_name_identifiers: Some(vec![
+                serde_json::json!({
+                    "nameIdentifier": "0000-0001-2345-6789",
+                    "nameIdentifierScheme": "ORCID",
+                    "schemeUri": "https://orcid.org"
+                })
+            ]),
             affiliation_idx: 0,
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "abc123".to_string(),
-            affiliation_raw: None,
+            affiliation_raw: Some(serde_json::json!({"name": "University of Oxford"})),
             existing_ror_id: None,
         },
         AuthorAffiliationRecord {
@@ -653,7 +659,7 @@ fn test_reconcile_enrichment_format() {
             affiliation_idx: 0,
             affiliation: "MIT".to_string(),
             affiliation_hash: "def456".to_string(),
-            affiliation_raw: None,
+            affiliation_raw: Some(serde_json::json!({"name": "MIT"})),
             existing_ror_id: None,
         },
     ];
@@ -757,6 +763,10 @@ resources:
     assert_eq!(affiliations[0]["affiliationIdentifier"], "https://ror.org/052gg0110");
     assert_eq!(affiliations[0]["affiliationIdentifierScheme"], "ROR");
     assert_eq!(affiliations[0]["schemeUri"], "https://ror.org");
+
+    // nameIdentifiers should be present in both original and enriched
+    assert!(rec["originalValue"]["nameIdentifiers"].is_array());
+    assert!(rec["enrichedValue"]["nameIdentifiers"].is_array());
 
     // Check contributors metadata
     let contributors = rec["contributors"].as_array().unwrap();
