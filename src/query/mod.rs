@@ -188,7 +188,6 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
                     }
                 }
                 Ok(None) => {
-                    // No match found - record as failure with "no match" error
                     let failed_record = RorMatchFailed {
                         affiliation: affiliation.clone(),
                         affiliation_hash: hash.clone(),
@@ -222,7 +221,6 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
                 }
             }
 
-            // Mark as processed in checkpoint
             {
                 let mut cp = checkpoint.lock().await;
                 cp.mark_processed(&hash);

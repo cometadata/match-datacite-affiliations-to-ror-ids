@@ -51,7 +51,6 @@ impl RorClient {
     ) -> Result<Option<String>> {
         let _permit = self.semaphore.acquire().await?;
 
-        // Phase 1: Try quoted single_search
         let quoted_url = format!(
             "{}/v2/organizations?affiliation=\"{}\"\u{0026}single_search",
             self.base_url,
@@ -65,7 +64,6 @@ impl RorClient {
                 }
             }
             Err(e) if e.to_string().contains("500") => {
-                // Phase 2: Retry without quotes on 500
                 let unquoted_url = format!(
                     "{}/v2/organizations?affiliation={}\u{0026}single_search",
                     self.base_url,
@@ -92,7 +90,6 @@ impl RorClient {
             }
         }
 
-        // Phase 3: Fallback to standard affiliation endpoint
         if fallback_multi {
             let multi_url = format!(
                 "{}/v2/organizations?affiliation=\"{}\"",
