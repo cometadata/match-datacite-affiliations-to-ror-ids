@@ -152,6 +152,9 @@ fn build_creator_value(
         obj.insert("familyName".to_string(), serde_json::json!(fn_));
     }
     obj.insert("name".to_string(), serde_json::json!(&author.name));
+    if let Some(ref ni) = author.name_identifiers {
+        obj.insert("nameIdentifiers".to_string(), serde_json::json!(ni));
+    }
     if let Some(affs) = affiliations {
         obj.insert("affiliation".to_string(), serde_json::json!(affs));
     }
@@ -189,11 +192,15 @@ fn process_doi_group_enrichment(
         .into_values()
         .filter(|author| author.affiliations.iter().any(|a| a.ror_id.is_some()))
         .map(|author| {
-            // originalValue: creator with original affiliations (name only)
+            // originalValue: creator with original affiliations (full raw objects preserved)
             let original_affiliations: Vec<serde_json::Value> = author
                 .affiliations
                 .iter()
-                .map(|a| serde_json::json!({ "name": a.name }))
+                .map(|a| {
+                    a.raw
+                        .clone()
+                        .unwrap_or_else(|| serde_json::json!({ "name": a.name }))
+                })
                 .collect();
 
             // enrichedValue: creator with ROR-enriched affiliations
@@ -209,7 +216,10 @@ fn process_doi_group_enrichment(
                             "schemeUri": "https://ror.org"
                         })
                     } else {
-                        serde_json::json!({ "name": a.name })
+                        // Unmatched: preserve original raw value with any existing identifiers
+                        a.raw
+                            .clone()
+                            .unwrap_or_else(|| serde_json::json!({ "name": a.name }))
                     }
                 })
                 .collect();

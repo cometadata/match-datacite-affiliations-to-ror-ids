@@ -774,3 +774,187 @@ resources:
     assert_eq!(rec2["originalValue"]["name"], "Smith, John");
     assert_eq!(rec2["enrichedValue"]["affiliation"][0]["affiliationIdentifier"], "https://ror.org/042nb2s44");
 }
+
+#[test]
+fn test_enrichment_format_preserves_name_identifiers() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_file = temp_dir.path().join("enrichments.jsonl");
+    std::fs::create_dir_all(&input_dir).unwrap();
+
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 0,
+            author_name: "Doe, Jane".to_string(),
+            author_name_type: Some("Personal".to_string()),
+            author_given_name: Some("Jane".to_string()),
+            author_family_name: Some("Doe".to_string()),
+            author_name_identifiers: Some(vec![
+                serde_json::json!({
+                    "nameIdentifier": "0000-0001-2345-6789",
+                    "nameIdentifierScheme": "ORCID",
+                    "schemeUri": "https://orcid.org"
+                })
+            ]),
+            affiliation_idx: 0,
+            affiliation: "University of Oxford".to_string(),
+            affiliation_hash: "abc123".to_string(),
+            affiliation_raw: Some(serde_json::json!({
+                "name": "University of Oxford",
+                "affiliationIdentifier": "https://isni.org/isni/0000000121901201",
+                "affiliationIdentifierScheme": "ISNI",
+                "schemeUri": "https://isni.org"
+            })),
+            existing_ror_id: None,
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    {
+        let mut file = File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+        writeln!(file, r#"{{"affiliation":"University of Oxford","affiliation_hash":"abc123","ror_id":"https://ror.org/052gg0110"}}"#).unwrap();
+    }
+
+    let ror_data_file = create_minimal_ror_data(temp_dir.path());
+
+    let config_file = temp_dir.path().join("config.yaml");
+    std::fs::write(
+        &config_file,
+        "contributors:\n  - name: \"Test\"\n    contributorType: \"Producer\"\nresources:\n  - relatedIdentifier: \"http://example.com\"\n    relatedIdentifierType: \"URL\"\n    relationType: \"IsDocumentedBy\"\n",
+    ).unwrap();
+
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: Some(output_file.clone()),
+        ror_data: ror_data_file,
+        enrichment_format: true,
+        enrichment_config: Some(config_file),
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    let content = std::fs::read_to_string(&output_file).unwrap();
+    let rec: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+
+    // originalValue should have nameIdentifiers
+    let orig_name_ids = rec["originalValue"]["nameIdentifiers"].as_array().unwrap();
+    assert_eq!(orig_name_ids.len(), 1);
+    assert_eq!(orig_name_ids[0]["nameIdentifier"], "0000-0001-2345-6789");
+    assert_eq!(orig_name_ids[0]["nameIdentifierScheme"], "ORCID");
+
+    // originalValue affiliations should preserve existing identifiers
+    let orig_affs = rec["originalValue"]["affiliation"].as_array().unwrap();
+    assert_eq!(orig_affs[0]["name"], "University of Oxford");
+    assert_eq!(orig_affs[0]["affiliationIdentifier"], "https://isni.org/isni/0000000121901201");
+    assert_eq!(orig_affs[0]["affiliationIdentifierScheme"], "ISNI");
+
+    // enrichedValue should also have nameIdentifiers
+    let enr_name_ids = rec["enrichedValue"]["nameIdentifiers"].as_array().unwrap();
+    assert_eq!(enr_name_ids.len(), 1);
+    assert_eq!(enr_name_ids[0]["nameIdentifier"], "0000-0001-2345-6789");
+
+    // enrichedValue affiliations should have ROR added (replacing the existing identifier)
+    let enr_affs = rec["enrichedValue"]["affiliation"].as_array().unwrap();
+    assert_eq!(enr_affs[0]["name"], "University of Oxford");
+    assert_eq!(enr_affs[0]["affiliationIdentifier"], "https://ror.org/052gg0110");
+    assert_eq!(enr_affs[0]["affiliationIdentifierScheme"], "ROR");
+    assert_eq!(enr_affs[0]["schemeUri"], "https://ror.org");
+}
+
+#[test]
+fn test_enrichment_format_preserves_unmatched_affiliation_identifiers() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_file = temp_dir.path().join("enrichments.jsonl");
+    std::fs::create_dir_all(&input_dir).unwrap();
+
+    // Author with two affiliations: one matched, one unmatched with ISNI
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 0,
+            author_name: "Doe, Jane".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
+            author_name_identifiers: None,
+            affiliation_idx: 0,
+            affiliation: "University of Oxford".to_string(),
+            affiliation_hash: "abc123".to_string(),
+            affiliation_raw: Some(serde_json::json!({"name": "University of Oxford"})),
+            existing_ror_id: None,
+        },
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            author_idx: 0,
+            author_name: "Doe, Jane".to_string(),
+            author_name_type: None,
+            author_given_name: None,
+            author_family_name: None,
+            author_name_identifiers: None,
+            affiliation_idx: 1,
+            affiliation: "Some Lab".to_string(),
+            affiliation_hash: "lab456".to_string(),
+            affiliation_raw: Some(serde_json::json!({
+                "name": "Some Lab",
+                "affiliationIdentifier": "https://isni.org/isni/999",
+                "affiliationIdentifierScheme": "ISNI",
+                "schemeUri": "https://isni.org"
+            })),
+            existing_ror_id: None,
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    // Only Oxford has a match
+    {
+        let mut file = File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+        writeln!(file, r#"{{"affiliation":"University of Oxford","affiliation_hash":"abc123","ror_id":"https://ror.org/052gg0110"}}"#).unwrap();
+    }
+
+    let ror_data_file = create_minimal_ror_data(temp_dir.path());
+
+    let config_file = temp_dir.path().join("config.yaml");
+    std::fs::write(
+        &config_file,
+        "contributors:\n  - name: \"Test\"\n    contributorType: \"Producer\"\nresources:\n  - relatedIdentifier: \"http://example.com\"\n    relatedIdentifierType: \"URL\"\n    relationType: \"IsDocumentedBy\"\n",
+    ).unwrap();
+
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: Some(output_file.clone()),
+        ror_data: ror_data_file,
+        enrichment_format: true,
+        enrichment_config: Some(config_file),
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    let content = std::fs::read_to_string(&output_file).unwrap();
+    let rec: serde_json::Value = serde_json::from_str(content.trim()).unwrap();
+
+    // enrichedValue: unmatched affiliation should keep its ISNI identifier
+    let enr_affs = rec["enrichedValue"]["affiliation"].as_array().unwrap();
+    assert_eq!(enr_affs.len(), 2);
+
+    // Matched affiliation gets ROR
+    assert_eq!(enr_affs[0]["affiliationIdentifier"], "https://ror.org/052gg0110");
+
+    // Unmatched affiliation keeps its original ISNI
+    assert_eq!(enr_affs[1]["name"], "Some Lab");
+    assert_eq!(enr_affs[1]["affiliationIdentifier"], "https://isni.org/isni/999");
+    assert_eq!(enr_affs[1]["affiliationIdentifierScheme"], "ISNI");
+}
