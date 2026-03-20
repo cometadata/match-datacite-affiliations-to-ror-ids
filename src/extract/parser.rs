@@ -85,6 +85,14 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
             .and_then(Value::as_array)
             .cloned();
 
+        let creator_raw = {
+            let mut raw = creator.clone();
+            if let Some(obj) = raw.as_object_mut() {
+                obj.remove("affiliation");
+            }
+            Some(raw)
+        };
+
         let affiliations = match creator.get("affiliation") {
             Some(Value::Array(arr)) => arr,
             _ => continue,
@@ -105,7 +113,7 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
                         author_given_name: author_given_name.clone(),
                         author_family_name: author_family_name.clone(),
                         author_name_identifiers: author_name_identifiers.clone(),
-                        creator_raw: None,
+                        creator_raw: creator_raw.clone(),
                         affiliation_idx,
                         affiliation: affiliation_name.clone(),
                         affiliation_hash: hash_affiliation(&affiliation_name),
