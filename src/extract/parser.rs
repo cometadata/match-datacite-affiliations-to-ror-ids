@@ -105,6 +105,7 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
                         author_given_name: author_given_name.clone(),
                         author_family_name: author_family_name.clone(),
                         author_name_identifiers: author_name_identifiers.clone(),
+                        creator_raw: None,
                         affiliation_idx,
                         affiliation: affiliation_name.clone(),
                         affiliation_hash: hash_affiliation(&affiliation_name),

@@ -323,3 +323,46 @@ fn test_parse_preserves_full_affiliation_object() {
     assert_eq!(raw["affiliationIdentifierScheme"], "ISNI");
     assert_eq!(raw["schemeUri"], "https://isni.org");
 }
+
+#[test]
+fn test_parse_preserves_creator_raw() {
+    let record_json = r#"{
+        "id": "10.1234/test",
+        "attributes": {
+            "doi": "10.1234/test",
+            "creators": [
+                {
+                    "name": "Doe, Jane",
+                    "nameType": "Personal",
+                    "givenName": "Jane",
+                    "familyName": "Doe",
+                    "lang": "en",
+                    "nameIdentifiers": [
+                        {
+                            "nameIdentifier": "0000-0001-2345-6789",
+                            "nameIdentifierScheme": "ORCID",
+                            "schemeUri": "https://orcid.org"
+                        }
+                    ],
+                    "affiliation": [
+                        {"name": "University of Oxford"}
+                    ]
+                }
+            ]
+        }
+    }"#;
+
+    let record: serde_json::Value = serde_json::from_str(record_json).unwrap();
+    let affiliations = datacite_ror::extract::parse_affiliations(&record);
+
+    assert_eq!(affiliations.len(), 1);
+    let raw = affiliations[0].creator_raw.as_ref().unwrap();
+    assert_eq!(raw["name"], "Doe, Jane");
+    assert_eq!(raw["nameType"], "Personal");
+    assert_eq!(raw["givenName"], "Jane");
+    assert_eq!(raw["familyName"], "Doe");
+    assert_eq!(raw["lang"], "en");
+    assert!(raw["nameIdentifiers"].is_array());
+    // affiliation should be stripped from creator_raw to avoid redundancy
+    assert!(raw.get("affiliation").is_none());
+}

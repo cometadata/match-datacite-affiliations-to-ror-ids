@@ -22,6 +22,8 @@ pub struct AuthorAffiliationRecord {
     pub author_family_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author_name_identifiers: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creator_raw: Option<serde_json::Value>,
     pub affiliation_idx: usize,
     pub affiliation: String,
     pub affiliation_hash: String,
