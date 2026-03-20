@@ -61,6 +61,7 @@ pub fn load_ror_matches<P: AsRef<Path>>(path: P) -> Result<HashMap<String, Strin
 struct AffiliationData {
     name: String,
     ror_id: Option<String>, // None if no ROR match
+    raw: Option<serde_json::Value>,
 }
 
 struct AuthorData {
@@ -68,6 +69,7 @@ struct AuthorData {
     name_type: Option<String>,
     given_name: Option<String>,
     family_name: Option<String>,
+    name_identifiers: Option<Vec<serde_json::Value>>,
     affiliations: Vec<AffiliationData>,
 }
 
@@ -86,6 +88,7 @@ fn process_doi_group(
             name_type: record.author_name_type.clone(),
             given_name: record.author_given_name.clone(),
             family_name: record.author_family_name.clone(),
+            name_identifiers: record.author_name_identifiers.clone(),
             affiliations: Vec::new(),
         });
 
@@ -93,6 +96,7 @@ fn process_doi_group(
         author_entry.affiliations.push(AffiliationData {
             name: record.affiliation.clone(),
             ror_id,
+            raw: record.affiliation_raw.clone(),
         });
     }
 
@@ -169,6 +173,7 @@ fn process_doi_group_enrichment(
             name_type: record.author_name_type.clone(),
             given_name: record.author_given_name.clone(),
             family_name: record.author_family_name.clone(),
+            name_identifiers: record.author_name_identifiers.clone(),
             affiliations: Vec::new(),
         });
 
@@ -176,6 +181,7 @@ fn process_doi_group_enrichment(
         author_entry.affiliations.push(AffiliationData {
             name: record.affiliation.clone(),
             ror_id,
+            raw: record.affiliation_raw.clone(),
         });
     }
 
