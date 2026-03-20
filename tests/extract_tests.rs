@@ -255,3 +255,71 @@ fn test_parse_datacite_record_ignores_non_ror_identifier() {
     assert_eq!(affiliations.len(), 1);
     assert_eq!(affiliations[0].existing_ror_id, None);
 }
+
+#[test]
+fn test_parse_preserves_name_identifiers() {
+    let record_json = r#"{
+        "id": "10.1234/test",
+        "attributes": {
+            "doi": "10.1234/test",
+            "creators": [
+                {
+                    "name": "Doe, Jane",
+                    "givenName": "Jane",
+                    "familyName": "Doe",
+                    "nameIdentifiers": [
+                        {
+                            "nameIdentifier": "0000-0001-2345-6789",
+                            "nameIdentifierScheme": "ORCID",
+                            "schemeUri": "https://orcid.org"
+                        }
+                    ],
+                    "affiliation": [
+                        {"name": "University of Oxford"}
+                    ]
+                }
+            ]
+        }
+    }"#;
+
+    let record: serde_json::Value = serde_json::from_str(record_json).unwrap();
+    let affiliations = datacite_ror::extract::parse_affiliations(&record);
+
+    assert_eq!(affiliations.len(), 1);
+    let name_ids = affiliations[0].author_name_identifiers.as_ref().unwrap();
+    assert_eq!(name_ids.len(), 1);
+    assert_eq!(name_ids[0]["nameIdentifier"], "0000-0001-2345-6789");
+    assert_eq!(name_ids[0]["nameIdentifierScheme"], "ORCID");
+}
+
+#[test]
+fn test_parse_preserves_full_affiliation_object() {
+    let record_json = r#"{
+        "id": "10.1234/test",
+        "attributes": {
+            "doi": "10.1234/test",
+            "creators": [
+                {
+                    "name": "Doe, Jane",
+                    "affiliation": [
+                        {
+                            "name": "University of Oxford",
+                            "affiliationIdentifier": "https://isni.org/isni/0000000121901201",
+                            "affiliationIdentifierScheme": "ISNI",
+                            "schemeUri": "https://isni.org"
+                        }
+                    ]
+                }
+            ]
+        }
+    }"#;
+
+    let record: serde_json::Value = serde_json::from_str(record_json).unwrap();
+    let affiliations = datacite_ror::extract::parse_affiliations(&record);
+
+    assert_eq!(affiliations.len(), 1);
+    let raw = affiliations[0].affiliation_raw.as_ref().unwrap();
+    assert_eq!(raw["affiliationIdentifier"], "https://isni.org/isni/0000000121901201");
+    assert_eq!(raw["affiliationIdentifierScheme"], "ISNI");
+    assert_eq!(raw["schemeUri"], "https://isni.org");
+}
