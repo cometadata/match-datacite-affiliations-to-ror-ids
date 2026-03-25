@@ -43,7 +43,6 @@ impl RorClient {
         }
     }
 
-    /// Returns Ok(Some(ror_id)) on match, Ok(None) on no match, Err on failure
     pub async fn query_affiliation(
         &self,
         affiliation: &str,
@@ -100,7 +99,6 @@ impl RorClient {
             match self.make_request(&multi_url).await {
                 Ok(ror_id) => return Ok(ror_id),
                 Err(_) => {
-                    // Try unquoted multi
                     let unquoted_multi_url = format!(
                         "{}/v2/organizations?affiliation={}",
                         self.base_url,

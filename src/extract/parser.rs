@@ -1,4 +1,4 @@
-use crate::{hash_affiliation, AuthorAffiliationRecord};
+use crate::{hash_affiliation, AuthorAffiliationRecord, RecordField};
 use serde_json::Value;
 
 fn extract_doi(record: &Value) -> Option<String> {
@@ -12,10 +12,6 @@ fn extract_doi(record: &Value) -> Option<String> {
                 .and_then(Value::as_str)
                 .map(String::from)
         })
-}
-
-fn extract_author_name(creator: &Value) -> Option<String> {
-    creator.get("name").and_then(Value::as_str).map(String::from)
 }
 
 /// Handles both object format {"name": "..."} and plain string format
@@ -49,51 +45,27 @@ fn extract_existing_ror_id(affiliation: &Value) -> Option<String> {
     }
 }
 
-pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
+fn extract_person_affiliations(
+    doi: &str,
+    persons: &[Value],
+    field: RecordField,
+) -> Vec<AuthorAffiliationRecord> {
     let mut results = Vec::new();
 
-    let doi = match extract_doi(record) {
-        Some(d) => d,
-        None => return results,
-    };
+    for (idx, person) in persons.iter().enumerate() {
+        if person.get("name").and_then(Value::as_str).is_none() {
+            continue;
+        }
 
-    let creators = match record.pointer("/attributes/creators") {
-        Some(Value::Array(arr)) => arr,
-        _ => return results,
-    };
-
-    for (author_idx, creator) in creators.iter().enumerate() {
-        let author_name = match extract_author_name(creator) {
-            Some(n) => n,
-            None => continue,
-        };
-
-        let author_name_type = creator
-            .get("nameType")
-            .and_then(Value::as_str)
-            .map(String::from);
-        let author_given_name = creator
-            .get("givenName")
-            .and_then(Value::as_str)
-            .map(String::from);
-        let author_family_name = creator
-            .get("familyName")
-            .and_then(Value::as_str)
-            .map(String::from);
-        let author_name_identifiers: Option<Vec<serde_json::Value>> = creator
-            .get("nameIdentifiers")
-            .and_then(Value::as_array)
-            .cloned();
-
-        let creator_raw = {
-            let mut raw = creator.clone();
+        let source_raw = {
+            let mut raw = person.clone();
             if let Some(obj) = raw.as_object_mut() {
                 obj.remove("affiliation");
             }
-            Some(raw)
+            raw
         };
 
-        let affiliations = match creator.get("affiliation") {
+        let affiliations = match person.get("affiliation") {
             Some(Value::Array(arr)) => arr,
             _ => continue,
         };
@@ -106,14 +78,10 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
                         _ => None,
                     };
                     results.push(AuthorAffiliationRecord {
-                        doi: doi.clone(),
-                        author_idx,
-                        author_name: author_name.clone(),
-                        author_name_type: author_name_type.clone(),
-                        author_given_name: author_given_name.clone(),
-                        author_family_name: author_family_name.clone(),
-                        author_name_identifiers: author_name_identifiers.clone(),
-                        creator_raw: creator_raw.clone(),
+                        doi: doi.to_string(),
+                        field: field.clone(),
+                        idx,
+                        source_raw: source_raw.clone(),
                         affiliation_idx,
                         affiliation: affiliation_name.clone(),
                         affiliation_hash: hash_affiliation(&affiliation_name),
@@ -123,6 +91,25 @@ pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
                 }
             }
         }
+    }
+
+    results
+}
+
+pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
+    let doi = match extract_doi(record) {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+
+    let mut results = Vec::new();
+
+    if let Some(Value::Array(creators)) = record.pointer("/attributes/creators") {
+        results.extend(extract_person_affiliations(&doi, creators, RecordField::Creators));
+    }
+
+    if let Some(Value::Array(contributors)) = record.pointer("/attributes/contributors") {
+        results.extend(extract_person_affiliations(&doi, contributors, RecordField::Contributors));
     }
 
     results
