@@ -249,7 +249,11 @@ fn test_load_ror_data_handles_missing_ror_display() {
 }
 
 #[test]
-fn test_reconcile_includes_existing_ror_ids_in_enriched() {
+fn test_reconcile_includes_existing_ror_affiliations_for_author_with_new_match() {
+    // Tests the "Klemm, Anna" scenario: one author has multiple affiliations,
+    // some with existing ROR IDs and some without. The author should appear in
+    // enriched output (because they have a new match), and ALL their affiliations
+    // should be present (including existing-ROR ones) so originalValue is complete.
     let temp_dir = TempDir::new().unwrap();
     let input_dir = temp_dir.path().join("input");
     let output_file = temp_dir.path().join("enriched.jsonl");
@@ -262,6 +266,7 @@ fn test_reconcile_includes_existing_ror_ids_in_enriched() {
     ]"#;
     std::fs::write(&ror_data_file, ror_data).unwrap();
 
+    // Same author (idx 0) with two affiliations: one existing ROR, one new match
     let relationships = vec![
         AuthorAffiliationRecord {
             doi: "10.1234/test".to_string(),
@@ -271,18 +276,22 @@ fn test_reconcile_includes_existing_ror_ids_in_enriched() {
             affiliation_idx: 0,
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "abc123".to_string(),
-            affiliation_raw: None,
+            affiliation_raw: Some(serde_json::json!({
+                "name": "University of Oxford",
+                "affiliationIdentifier": "https://ror.org/052gg0110",
+                "affiliationIdentifierScheme": "ROR"
+            })),
             existing_ror_id: Some("https://ror.org/052gg0110".to_string()),
         },
         AuthorAffiliationRecord {
             doi: "10.1234/test".to_string(),
             field: RecordField::Creators,
-            idx: 1,
-            source_raw: serde_json::json!({"name": "Smith, John"}),
-            affiliation_idx: 0,
+            idx: 0,
+            source_raw: serde_json::json!({"name": "Doe, Jane"}),
+            affiliation_idx: 1,
             affiliation: "MIT".to_string(),
             affiliation_hash: "def456".to_string(),
-            affiliation_raw: None,
+            affiliation_raw: Some(serde_json::json!({"name": "MIT"})),
             existing_ror_id: None,
         },
     ];
@@ -297,7 +306,6 @@ fn test_reconcile_includes_existing_ror_ids_in_enriched() {
 
     {
         let mut file = File::create(input_dir.join("ror_matches.jsonl")).unwrap();
-        writeln!(file, r#"{{"affiliation":"University of Oxford","affiliation_hash":"abc123","ror_id":"https://ror.org/052gg0110"}}"#).unwrap();
         writeln!(file, r#"{{"affiliation":"MIT","affiliation_hash":"def456","ror_id":"https://ror.org/042nb2s44"}}"#).unwrap();
     }
 
@@ -317,10 +325,127 @@ fn test_reconcile_includes_existing_ror_ids_in_enriched() {
         .filter_map(|l| serde_json::from_str(&l).ok())
         .collect();
 
-    // Both creators should appear: existing-ROR affiliations are now included
-    // alongside newly-matched ones so originalValue faithfully represents the full record
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].creators.len(), 2);
+    assert_eq!(records[0].creators.len(), 1);
+    assert_eq!(records[0].creators[0].name, "Doe, Jane");
+    // Non-enrichment format only shows newly matched affiliations
+    assert_eq!(records[0].creators[0].affiliation.len(), 1);
+    assert_eq!(records[0].creators[0].affiliation[0].name, "MIT");
+}
+
+#[test]
+fn test_enrichment_format_preserves_existing_ror_affiliations_in_original_value() {
+    // Regression test for the "Klemm, Anna" bug: enrichment format must include
+    // ALL affiliations (including those with existing ROR IDs) in originalValue
+    // so it matches the actual DOI record for ingest validation.
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_file = temp_dir.path().join("enrichments.jsonl");
+    let ror_data_file = temp_dir.path().join("ror_data.json");
+    let config_file = temp_dir.path().join("config.yaml");
+    std::fs::create_dir_all(&input_dir).unwrap();
+
+    let ror_data = r#"[
+        {"id": "https://ror.org/052gg0110", "names": [{"value": "University of Oxford", "types": ["ror_display"], "lang": "en"}]},
+        {"id": "https://ror.org/042nb2s44", "names": [{"value": "MIT", "types": ["ror_display"], "lang": "en"}]}
+    ]"#;
+    std::fs::write(&ror_data_file, ror_data).unwrap();
+
+    let config = r#"
+contributors:
+  - name: "Test"
+    nameType: "Organizational"
+    contributorType: "Producer"
+resources:
+  - relatedIdentifier: "https://example.com"
+    relatedIdentifierType: "URL"
+    relationType: "IsDerivedFrom"
+    resourceTypeGeneral: "Dataset"
+"#;
+    std::fs::write(&config_file, config).unwrap();
+
+    // Same author (idx 0) with two affiliations: one with existing ROR, one without
+    let relationships = vec![
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            field: RecordField::Creators,
+            idx: 0,
+            source_raw: serde_json::json!({"name": "Doe, Jane", "nameType": "Personal"}),
+            affiliation_idx: 0,
+            affiliation: "University of Oxford".to_string(),
+            affiliation_hash: "abc123".to_string(),
+            affiliation_raw: Some(serde_json::json!({
+                "name": "University of Oxford",
+                "affiliationIdentifier": "https://ror.org/052gg0110",
+                "affiliationIdentifierScheme": "ROR"
+            })),
+            existing_ror_id: Some("https://ror.org/052gg0110".to_string()),
+        },
+        AuthorAffiliationRecord {
+            doi: "10.1234/test".to_string(),
+            field: RecordField::Creators,
+            idx: 0,
+            source_raw: serde_json::json!({"name": "Doe, Jane", "nameType": "Personal"}),
+            affiliation_idx: 1,
+            affiliation: "MIT".to_string(),
+            affiliation_hash: "def456".to_string(),
+            affiliation_raw: Some(serde_json::json!({"name": "MIT"})),
+            existing_ror_id: None,
+        },
+    ];
+
+    {
+        let file = File::create(input_dir.join("doi_author_affiliations.jsonl")).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        for r in &relationships {
+            writeln!(writer, "{}", serde_json::to_string(r).unwrap()).unwrap();
+        }
+    }
+
+    {
+        let mut file = File::create(input_dir.join("ror_matches.jsonl")).unwrap();
+        writeln!(file, r#"{{"affiliation":"MIT","affiliation_hash":"def456","ror_id":"https://ror.org/042nb2s44"}}"#).unwrap();
+    }
+
+    let args = datacite_ror::reconcile::ReconcileArgs {
+        input: input_dir,
+        output: Some(output_file.clone()),
+        ror_data: ror_data_file,
+        enrichment_format: true,
+        enrichment_config: Some(config_file),
+    };
+    datacite_ror::reconcile::run(args).unwrap();
+
+    let reader = std::io::BufReader::new(File::open(&output_file).unwrap());
+    let records: Vec<serde_json::Value> = reader
+        .lines()
+        .filter_map(|l| l.ok())
+        .filter_map(|l| serde_json::from_str(&l).ok())
+        .collect();
+
+    assert_eq!(records.len(), 1);
+
+    let original_value = &records[0]["originalValue"];
+    let enriched_value = &records[0]["enrichedValue"];
+
+    // originalValue must contain BOTH affiliations (existing ROR + unmatched)
+    let orig_affs = original_value["affiliation"].as_array().unwrap();
+    assert_eq!(orig_affs.len(), 2, "originalValue must include all affiliations");
+
+    // enrichedValue must also contain both, with MIT now having ROR
+    let enriched_affs = enriched_value["affiliation"].as_array().unwrap();
+    assert_eq!(enriched_affs.len(), 2, "enrichedValue must include all affiliations");
+
+    // Verify MIT got enriched with ROR in enrichedValue
+    let mit_enriched = enriched_affs.iter().find(|a| a["name"] == "MIT").unwrap();
+    assert_eq!(mit_enriched["affiliationIdentifierScheme"], "ROR");
+    assert_eq!(mit_enriched["affiliationIdentifier"], "https://ror.org/042nb2s44");
+
+    // Verify Oxford preserved as-is in both original and enriched
+    let oxford_orig = orig_affs.iter().find(|a| a["name"] == "University of Oxford").unwrap();
+    assert_eq!(oxford_orig["affiliationIdentifierScheme"], "ROR");
+    let oxford_enriched = enriched_affs.iter().find(|a| a["name"] == "University of Oxford").unwrap();
+    assert_eq!(oxford_enriched["affiliationIdentifierScheme"], "ROR");
 }
 
 #[test]

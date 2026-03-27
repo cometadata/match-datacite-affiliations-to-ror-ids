@@ -62,6 +62,7 @@ struct AffiliationData {
     name: String,
     ror_id: Option<String>,
     raw: Option<serde_json::Value>,
+    had_existing_ror: bool,
 }
 
 struct AuthorData {
@@ -86,14 +87,23 @@ fn collect_authors(
         });
 
         let ror_id = ror_lookup.get(&record.affiliation_hash).cloned();
+        let had_existing_ror = record.existing_ror_id.is_some();
         author_entry.affiliations.push(AffiliationData {
             name: record.affiliation.clone(),
             ror_id,
             raw: record.affiliation_raw.clone(),
+            had_existing_ror,
         });
     }
 
     authors
+}
+
+fn has_new_ror_match(author: &AuthorData) -> bool {
+    author
+        .affiliations
+        .iter()
+        .any(|a| a.ror_id.is_some() && !a.had_existing_ror)
 }
 
 fn build_enriched_affiliations(author: &AuthorData) -> Vec<EnrichedAffiliation> {
@@ -126,7 +136,7 @@ fn process_doi_group(
 
     let creators: Vec<EnrichedCreator> = creator_authors
         .into_values()
-        .filter(|author| author.affiliations.iter().any(|a| a.ror_id.is_some()))
+        .filter(|author| has_new_ror_match(author))
         .map(|author| {
             let affiliations = build_enriched_affiliations(&author);
             let name = get_str(&author.source_raw, "name").unwrap_or_default();
@@ -143,7 +153,7 @@ fn process_doi_group(
 
     let contributors: Vec<EnrichedContributor> = contributor_authors
         .into_values()
-        .filter(|author| author.affiliations.iter().any(|a| a.ror_id.is_some()))
+        .filter(|author| has_new_ror_match(author))
         .map(|author| {
             let affiliations = build_enriched_affiliations(&author);
             let name = get_str(&author.source_raw, "name").unwrap_or_default();
@@ -193,7 +203,7 @@ fn build_enrichment_records(
 ) -> Vec<EnrichmentOutputRecord> {
     authors
         .into_values()
-        .filter(|author| author.affiliations.iter().any(|a| a.ror_id.is_some()))
+        .filter(|author| has_new_ror_match(author))
         .map(|author| {
             // originalValue: person with original affiliations (full raw objects preserved)
             let original_affiliations: Vec<serde_json::Value> = author
