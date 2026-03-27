@@ -249,7 +249,7 @@ fn test_load_ror_data_handles_missing_ror_display() {
 }
 
 #[test]
-fn test_reconcile_excludes_existing_ror_ids_from_enriched() {
+fn test_reconcile_includes_existing_ror_ids_in_enriched() {
     let temp_dir = TempDir::new().unwrap();
     let input_dir = temp_dir.path().join("input");
     let output_file = temp_dir.path().join("enriched.jsonl");
@@ -317,10 +317,10 @@ fn test_reconcile_excludes_existing_ror_ids_from_enriched() {
         .filter_map(|l| serde_json::from_str(&l).ok())
         .collect();
 
+    // Both creators should appear: existing-ROR affiliations are now included
+    // alongside newly-matched ones so originalValue faithfully represents the full record
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].creators.len(), 1);
-    assert_eq!(records[0].creators[0].name, "Smith, John");
-    assert_eq!(records[0].creators[0].affiliation[0].name, "MIT");
+    assert_eq!(records[0].creators.len(), 2);
 }
 
 #[test]

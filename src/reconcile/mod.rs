@@ -362,35 +362,35 @@ pub fn run(args: ReconcileArgs) -> Result<()> {
                 .entry(existing_ror_id.clone())
                 .and_modify(|c| *c += 1)
                 .or_insert(1);
-        } else {
-            let is_new_doi = current_doi.as_ref() != Some(&record.doi);
+        }
 
-            if is_new_doi && !current_group.is_empty() {
-                if let Some(ref config) = enrichment_config {
-                    let enrichments = process_doi_group_enrichment(
-                        current_doi.as_ref().unwrap(),
-                        &current_group,
-                        &ror_lookup,
-                        config,
-                    );
-                    for enrichment in &enrichments {
-                        writeln!(enriched_writer, "{}", serde_json::to_string(enrichment)?)?;
-                    }
-                    records_enriched += enrichments.len() as u64;
-                } else if let Some(enriched) = process_doi_group(
+        let is_new_doi = current_doi.as_ref() != Some(&record.doi);
+
+        if is_new_doi && !current_group.is_empty() {
+            if let Some(ref config) = enrichment_config {
+                let enrichments = process_doi_group_enrichment(
                     current_doi.as_ref().unwrap(),
                     &current_group,
                     &ror_lookup,
-                ) {
-                    writeln!(enriched_writer, "{}", serde_json::to_string(&enriched)?)?;
-                    records_enriched += 1;
+                    config,
+                );
+                for enrichment in &enrichments {
+                    writeln!(enriched_writer, "{}", serde_json::to_string(enrichment)?)?;
                 }
-                current_group.clear();
+                records_enriched += enrichments.len() as u64;
+            } else if let Some(enriched) = process_doi_group(
+                current_doi.as_ref().unwrap(),
+                &current_group,
+                &ror_lookup,
+            ) {
+                writeln!(enriched_writer, "{}", serde_json::to_string(&enriched)?)?;
+                records_enriched += 1;
             }
-
-            current_doi = Some(record.doi.clone());
-            current_group.push(record);
+            current_group.clear();
         }
+
+        current_doi = Some(record.doi.clone());
+        current_group.push(record);
     }
 
     if !current_group.is_empty() {
