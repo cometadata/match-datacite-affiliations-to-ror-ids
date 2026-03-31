@@ -26,14 +26,12 @@ async fn test_full_pipeline_extract_query_reconcile() {
     fs::create_dir_all(&data_dir).unwrap();
     fs::create_dir_all(&work_dir).unwrap();
 
-    // Create test DataCite records
     let records = vec![
-        r#"{"id":"10.1234/paper1","attributes":{"doi":"10.1234/paper1","creators":[{"name":"Author One","affiliation":[{"name":"Harvard University"}]}]}}"#,
+        r#"{"id":"10.1234/paper1","attributes":{"doi":"10.1234/paper1","creators":[{"name":"Author One","nameIdentifiers":[{"nameIdentifier":"0000-0001-0000-0001","nameIdentifierScheme":"ORCID","schemeUri":"https://orcid.org"}],"affiliation":[{"name":"Harvard University"}]}],"contributors":[{"name":"Editor One","contributorType":"Editor","affiliation":[{"name":"Harvard University"}]}]}}"#,
         r#"{"id":"10.1234/paper2","attributes":{"doi":"10.1234/paper2","creators":[{"name":"Author Two","affiliation":[{"name":"Stanford University"}]},{"name":"Author Three","affiliation":[{"name":"Harvard University"}]}]}}"#,
     ];
     create_test_datacite_file(&data_dir, "test.jsonl.gz", &records.join("\n"));
 
-    // Step 1: Extract
     let extract_args = datacite_ror::extract::ExtractArgs {
         input: data_dir.clone(),
         output: work_dir.clone(),
@@ -42,7 +40,6 @@ async fn test_full_pipeline_extract_query_reconcile() {
     };
     datacite_ror::extract::run(extract_args).unwrap();
 
-    // Verify extraction outputs
     assert!(work_dir.join("unique_affiliations.json").exists());
     assert!(work_dir.join("doi_author_affiliations.jsonl").exists());
 
@@ -50,12 +47,10 @@ async fn test_full_pipeline_extract_query_reconcile() {
         File::open(work_dir.join("unique_affiliations.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(affiliations.len(), 2); // Harvard and Stanford
+    assert_eq!(affiliations.len(), 2);
 
-    // Step 2: Query (with mock server)
     let mock_server = MockServer::start().await;
 
-    // Mock Harvard
     Mock::given(method("GET"))
         .and(path("/v2/organizations"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -82,11 +77,9 @@ async fn test_full_pipeline_extract_query_reconcile() {
     };
     datacite_ror::query::run_async(query_args).await.unwrap();
 
-    // Verify query outputs
     assert!(work_dir.join("ror_matches.jsonl").exists());
     assert!(work_dir.join("ror_matches.checkpoint").exists());
 
-    // Create ROR data file for reconcile step
     let ror_data_file = temp_dir.path().join("ror_data.json");
     let ror_data = r#"[
         {"id": "https://ror.org/03vek6s52", "names": [{"value": "Harvard University", "types": ["ror_display"], "lang": "en"}]},
@@ -94,7 +87,6 @@ async fn test_full_pipeline_extract_query_reconcile() {
     ]"#;
     fs::write(&ror_data_file, ror_data).unwrap();
 
-    // Step 3: Reconcile
     let reconcile_args = datacite_ror::reconcile::ReconcileArgs {
         input: work_dir.clone(),
         output: Some(output_file.clone()),
@@ -104,7 +96,6 @@ async fn test_full_pipeline_extract_query_reconcile() {
     };
     datacite_ror::reconcile::run(reconcile_args).unwrap();
 
-    // Verify final output
     assert!(output_file.exists());
 
     let content = fs::read_to_string(&output_file).unwrap();
@@ -113,10 +104,8 @@ async fn test_full_pipeline_extract_query_reconcile() {
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
 
-    // Both papers should have matches (Harvard matched for both)
     assert!(!records.is_empty());
 
-    // Verify DataCite schema compliance
     for record in &records {
         for creator in &record.creators {
             for affiliation in &creator.affiliation {
@@ -125,5 +114,19 @@ async fn test_full_pipeline_extract_query_reconcile() {
                 assert!(affiliation.affiliation_identifier.starts_with("https://ror.org/"));
             }
         }
+        for contributor in &record.contributors {
+            assert!(!contributor.contributor_type.is_empty());
+            for affiliation in &contributor.affiliation {
+                assert_eq!(affiliation.affiliation_identifier_scheme, "ROR");
+                assert_eq!(affiliation.scheme_uri, "https://ror.org");
+                assert!(affiliation.affiliation_identifier.starts_with("https://ror.org/"));
+            }
+        }
     }
+
+    // paper1 should have a contributor (Editor One with Harvard)
+    let paper1 = records.iter().find(|r| r.doi == "10.1234/paper1").unwrap();
+    assert_eq!(paper1.contributors.len(), 1);
+    assert_eq!(paper1.contributors[0].name, "Editor One");
+    assert_eq!(paper1.contributors[0].contributor_type, "Editor");
 }

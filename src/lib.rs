@@ -9,20 +9,29 @@ pub fn hash_affiliation(affiliation: &str) -> String {
     format!("{:016x}", xxh3_64(affiliation.as_bytes()))
 }
 
+fn default_creators_field() -> RecordField {
+    RecordField::Creators
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordField {
+    Creators,
+    Contributors,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorAffiliationRecord {
     pub doi: String,
-    pub author_idx: usize,
-    pub author_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub author_name_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub author_given_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub author_family_name: Option<String>,
+    #[serde(default = "default_creators_field")]
+    pub field: RecordField,
+    pub idx: usize,
+    pub source_raw: serde_json::Value,
     pub affiliation_idx: usize,
     pub affiliation: String,
     pub affiliation_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub affiliation_raw: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_ror_id: Option<String>,
 }
@@ -61,9 +70,22 @@ pub struct EnrichedCreator {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrichedContributor {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub given_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family_name: Option<String>,
+    pub contributor_type: String,
+    pub affiliation: Vec<EnrichedAffiliation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnrichedRecord {
     pub doi: String,
     pub creators: Vec<EnrichedCreator>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contributors: Vec<EnrichedContributor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

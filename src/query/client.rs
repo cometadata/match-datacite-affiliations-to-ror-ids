@@ -43,7 +43,6 @@ impl RorClient {
         }
     }
 
-    /// Returns Ok(Some(ror_id)) on match, Ok(None) on no match, Err on failure
     pub async fn query_affiliation(
         &self,
         affiliation: &str,
@@ -51,7 +50,6 @@ impl RorClient {
     ) -> Result<Option<String>> {
         let _permit = self.semaphore.acquire().await?;
 
-        // Phase 1: Try quoted single_search
         let quoted_url = format!(
             "{}/v2/organizations?affiliation=\"{}\"\u{0026}single_search",
             self.base_url,
@@ -65,7 +63,6 @@ impl RorClient {
                 }
             }
             Err(e) if e.to_string().contains("500") => {
-                // Phase 2: Retry without quotes on 500
                 let unquoted_url = format!(
                     "{}/v2/organizations?affiliation={}\u{0026}single_search",
                     self.base_url,
@@ -92,7 +89,6 @@ impl RorClient {
             }
         }
 
-        // Phase 3: Fallback to standard affiliation endpoint
         if fallback_multi {
             let multi_url = format!(
                 "{}/v2/organizations?affiliation=\"{}\"",
@@ -103,7 +99,6 @@ impl RorClient {
             match self.make_request(&multi_url).await {
                 Ok(ror_id) => return Ok(ror_id),
                 Err(_) => {
-                    // Try unquoted multi
                     let unquoted_multi_url = format!(
                         "{}/v2/organizations?affiliation={}",
                         self.base_url,

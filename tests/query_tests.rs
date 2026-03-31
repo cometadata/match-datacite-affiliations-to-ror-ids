@@ -111,15 +111,12 @@ fn test_checkpoint_save_and_load() {
 
     let mut checkpoint = datacite_ror::query::Checkpoint::new(&checkpoint_path);
 
-    // Add some hashes
     checkpoint.mark_processed("abc123");
     checkpoint.mark_processed("def456");
     checkpoint.mark_processed("ghi789");
 
-    // Save
     checkpoint.save().unwrap();
 
-    // Load in new instance
     let loaded = datacite_ror::query::Checkpoint::load(&checkpoint_path).unwrap();
 
     assert!(loaded.is_processed("abc123"));
@@ -146,15 +143,12 @@ async fn test_query_full_pipeline() {
     fs::create_dir_all(&input_dir).unwrap();
     fs::create_dir_all(&output_dir).unwrap();
 
-    // Create unique_affiliations.json
     let affiliations = vec!["University of Oxford", "MIT"];
     let affiliations_file = input_dir.join("unique_affiliations.json");
     serde_json::to_writer(File::create(&affiliations_file).unwrap(), &affiliations).unwrap();
 
-    // Start mock server
     let mock_server = MockServer::start().await;
 
-    // Mock responses
     Mock::given(method("GET"))
         .and(path("/v2/organizations"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -170,7 +164,6 @@ async fn test_query_full_pipeline() {
         .mount(&mock_server)
         .await;
 
-    // Run query
     let args = datacite_ror::query::QueryArgs {
         input: input_dir,
         output: output_dir.clone(),
@@ -183,7 +176,6 @@ async fn test_query_full_pipeline() {
 
     datacite_ror::query::run_async(args).await.unwrap();
 
-    // Check ror_matches.jsonl exists
     let matches_file = output_dir.join("ror_matches.jsonl");
     assert!(matches_file.exists());
 
@@ -196,7 +188,6 @@ async fn test_query_full_pipeline() {
 
     assert_eq!(matches.len(), 2);
 
-    // Check checkpoint exists
     let checkpoint_file = output_dir.join("ror_matches.checkpoint");
     assert!(checkpoint_file.exists());
 }
