@@ -41,6 +41,8 @@ pub struct RorMatch {
     pub affiliation: String,
     pub affiliation_hash: String,
     pub ror_id: String,
+    #[serde(default)]
+    pub confidence: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

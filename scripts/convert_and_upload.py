@@ -783,13 +783,13 @@ def main():
     parser.add_argument(
         "--input-dir",
         type=Path,
-        default=Path("/Volumes/Untitled 2/datacite-ror-output"),
+        required=True,
         help="Input directory containing source files",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("/Volumes/Untitled 2/datacite-ror-output/hf_upload"),
+        required=True,
         help="Output directory for Parquet files",
     )
     parser.add_argument(

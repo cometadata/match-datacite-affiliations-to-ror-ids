@@ -1,13 +1,16 @@
 # match-datacite-affiliations-to-ror-ids
 
-CLI tool to extract the unique affiliation strings from the DataCite data, query them against the ROR API, and reconcile matches back to DOI/author records.
+CLI tool to extract the unique affiliation strings from the DataCite data, match them against ROR IDs via a match service, 
+and reconcile matches back to DOI/author records. Affiliation matching is performed via the [`affiliation-single-search`](https://gitlab.com/crossref/marple/-/blob/main/crossref_matcher/strategies/affiliation/single_search/strategy.py) 
+strategy from the Crossref matching service ([Marple](https://gitlab.com/crossref/marple)).
 
 ## Installation
 
 ### Prerequisites
 
-- [Obtain the DataCite public data file](https://support.datacite.org/docs/datacite-public-data-file)
-- [Setup a local ROR API instance](https://github.com/ror-community/ror-api)
+- [DataCite public data file](https://support.datacite.org/docs/datacite-public-data-file)
+- A running [Marple](https://gitlab.com/crossref/marple) matching service instance, indexed with the most recent ROR data, exposing `GET /match?task=affiliation&input=<name>`
+- [ROR data dump](https://ror.readme.io/docs/data-dump) (for resolving ROR IDs to organization names in the reconcile step)
 
 ### Build
 
@@ -21,7 +24,7 @@ cargo build --release
 The tool provides three subcommands that form a pipeline:
 
 1. `extract` - Extract unique affiliations from DataCite JSONL files
-2. `query` - Query affiliations against the ROR API
+2. `query` - Match affiliations against the Marple match service
 3. `reconcile` - Reconcile ROR matches back to DOI/author records
 
 ### Options
@@ -65,7 +68,7 @@ datacite-ror extract \
 
 ### Query Command
 
-Query affiliations against the ROR API to find organization matches.
+Match affiliations against the Marple match service to find ROR IDs.
 
 ```bash
 datacite-ror query --input <DIR> --output <DIR> [OPTIONS]
@@ -77,15 +80,15 @@ datacite-ror query --input <DIR> --output <DIR> [OPTIONS]
 |--------|-------|-------------|---------|
 | `--input` | `-i` | Working directory (reads `unique_affiliations.json`) | Required |
 | `--output` | `-o` | Working directory (writes match files) | Required |
-| `--base-url` | `-u` | ROR API base URL | `http://localhost:9292` |
+| `--base-url` | `-u` | Match service base URL | `http://localhost:8000` |
+| `--task` |  | Match-service task name | `affiliation` |
 | `--concurrency` | `-c` | Concurrent requests | 50 |
 | `--timeout` | `-t` | Request timeout in seconds | 30 |
 | `--resume` | `-r` | Resume from checkpoint | false |
-| `--fallback-multi` | `-f` | Enable fallback to standard affiliation endpoint | false |
 
 #### Output Files
 
-- `ror_matches.jsonl` - Successful ROR matches
+- `ror_matches.jsonl` - Successful ROR matches (includes `confidence`)
 - `ror_matches.failed.jsonl` - Failed queries (no match or errors)
 - `ror_matches.checkpoint` - Checkpoint file for resuming
 
@@ -95,7 +98,7 @@ datacite-ror query --input <DIR> --output <DIR> [OPTIONS]
 datacite-ror query \
   --input /work/affiliations \
   --output /work/affiliations \
-  --base-url http://localhost:9292 \
+  --base-url http://localhost:8000 \
   --concurrency 50 \
   --resume
 ```
@@ -186,10 +189,11 @@ datacite-ror extract \
   --output $WORK_DIR \
   --threads 16
 
-# Step 2: Query ROR API (with checkpoint support for large datasets)
+# Step 2: Query Marple match service (with checkpoint support for large datasets)
 datacite-ror query \
   --input $WORK_DIR \
   --output $WORK_DIR \
+  --base-url http://localhost:8000 \
   --concurrency 50 \
   --timeout 60 \
   --resume
@@ -239,7 +243,8 @@ Each line contains a successful match:
 {
   "affiliation": "Example University, City, Country",
   "affiliation_hash": "a1b2c3d4e5f67890",
-  "ror_id": "https://ror.org/0123456789"
+  "ror_id": "https://ror.org/0123456789",
+  "confidence": 0.92
 }
 ```
 
@@ -263,3 +268,32 @@ The query command supports checkpointing for long-running jobs:
 - Progress is saved to `ror_matches.checkpoint`
 - Use `--resume` flag to continue from where you left off
 - Checkpoint tracks processed affiliations by hash
+
+## Convert & Upload
+
+`scripts/convert_and_upload.py` converts pipeline output files to Parquet and uploads them to HuggingFace as a dataset.
+
+### Install dependencies
+
+```bash
+uv pip install "pyarrow>=14.0.0" "huggingface_hub>=0.19.0" "orjson>=3.9.0" "tqdm>=4.66.0"
+```
+
+Or run directly with `uv` (handles deps automatically):
+
+```bash
+uv run scripts/convert_and_upload.py --stats-only --input-dir $WORK_DIR --output-dir $WORK_DIR/hf_upload
+```
+
+### Usage
+
+```bash
+# Collect statistics only
+uv run scripts/convert_and_upload.py --stats-only --input-dir $WORK_DIR --output-dir $WORK_DIR/hf_upload
+
+# Convert to Parquet without uploading
+uv run scripts/convert_and_upload.py --convert-only --input-dir $WORK_DIR --output-dir $WORK_DIR/hf_upload
+
+# Convert and upload to HuggingFace
+uv run scripts/convert_and_upload.py --input-dir $WORK_DIR --output-dir $WORK_DIR/hf_upload --token $HF_TOKEN
+```

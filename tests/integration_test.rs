@@ -52,16 +52,17 @@ async fn test_full_pipeline_extract_query_reconcile() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
-        .and(path("/v2/organizations"))
+        .and(path("/match"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "items": [
-                {
-                    "chosen": true,
-                    "organization": {
-                        "id": "https://ror.org/03vek6s52"
+            "message": {
+                "items": [
+                    {
+                        "id": "https://ror.org/03vek6s52",
+                        "confidence": 0.9,
+                        "strategies": ["affiliation-single-search"]
                     }
-                }
-            ]
+                ]
+            }
         })))
         .mount(&mock_server)
         .await;
@@ -70,10 +71,10 @@ async fn test_full_pipeline_extract_query_reconcile() {
         input: work_dir.clone(),
         output: work_dir.clone(),
         base_url: mock_server.uri(),
+        task: "affiliation".to_string(),
         concurrency: 2,
         timeout: 5,
         resume: false,
-        fallback_multi: false,
     };
     datacite_ror::query::run_async(query_args).await.unwrap();
 

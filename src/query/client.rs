@@ -8,19 +8,19 @@ use tracing::warn;
 use urlencoding::encode;
 
 #[derive(Debug, Deserialize)]
-struct RorResponse {
-    items: Vec<RorItem>,
+struct MatchResponse {
+    message: MatchMessage,
 }
 
 #[derive(Debug, Deserialize)]
-struct RorItem {
-    chosen: Option<bool>,
-    organization: Option<RorOrganization>,
+struct MatchMessage {
+    items: Vec<MatchItem>,
 }
 
 #[derive(Debug, Deserialize)]
-struct RorOrganization {
+struct MatchItem {
     id: String,
+    confidence: f64,
 }
 
 pub struct RorClient {
@@ -43,91 +43,36 @@ impl RorClient {
         }
     }
 
+    /// Returns `Ok(Some((ror_id, confidence)))` on match, `Ok(None)` on no match,
+    /// `Err` on transport/5xx failure after retries.
     pub async fn query_affiliation(
         &self,
         affiliation: &str,
-        fallback_multi: bool,
-    ) -> Result<Option<String>> {
+        task: &str,
+    ) -> Result<Option<(String, f64)>> {
         let _permit = self.semaphore.acquire().await?;
 
-        let quoted_url = format!(
-            "{}/v2/organizations?affiliation=\"{}\"\u{0026}single_search",
+        let url = format!(
+            "{}/match?task={}&input={}",
             self.base_url,
+            encode(task),
             encode(affiliation)
         );
 
-        match self.make_request(&quoted_url).await {
-            Ok(ror_id) => {
-                if ror_id.is_some() {
-                    return Ok(ror_id);
-                }
-            }
-            Err(e) if e.to_string().contains("500") => {
-                let unquoted_url = format!(
-                    "{}/v2/organizations?affiliation={}\u{0026}single_search",
-                    self.base_url,
-                    encode(affiliation)
-                );
-
-                match self.make_request(&unquoted_url).await {
-                    Ok(ror_id) => {
-                        if ror_id.is_some() {
-                            return Ok(ror_id);
-                        }
-                    }
-                    Err(e) => {
-                        if !fallback_multi {
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                if !fallback_multi {
-                    return Err(e);
-                }
-            }
-        }
-
-        if fallback_multi {
-            let multi_url = format!(
-                "{}/v2/organizations?affiliation=\"{}\"",
-                self.base_url,
-                encode(affiliation)
-            );
-
-            match self.make_request(&multi_url).await {
-                Ok(ror_id) => return Ok(ror_id),
-                Err(_) => {
-                    let unquoted_multi_url = format!(
-                        "{}/v2/organizations?affiliation={}",
-                        self.base_url,
-                        encode(affiliation)
-                    );
-                    return self.make_request(&unquoted_multi_url).await;
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    async fn make_request(&self, url: &str) -> Result<Option<String>> {
         let max_retries = 3;
-
         for attempt in 0..max_retries {
-            match self.client.get(url).send().await {
+            match self.client.get(&url).send().await {
                 Ok(response) => {
                     let status = response.status();
-
                     if status.is_success() {
-                        let ror_response: RorResponse = response.json().await?;
-                        return Ok(self.extract_chosen_ror_id(&ror_response));
-                    } else if status.as_u16() >= 500 {
-                        // Return error immediately for 500s - let caller handle fallback strategy
-                        return Err(anyhow!("HTTP {}", status));
+                        let parsed: MatchResponse = response.json().await?;
+                        return Ok(parsed
+                            .message
+                            .items
+                            .into_iter()
+                            .next()
+                            .map(|i| (i.id, i.confidence)));
                     } else if status.as_u16() == 429 {
-                        // Rate limited - retry with backoff
                         let wait = response
                             .headers()
                             .get("Retry-After")
@@ -154,14 +99,5 @@ impl RorClient {
         }
 
         Err(anyhow!("Max retries exceeded"))
-    }
-
-    fn extract_chosen_ror_id(&self, response: &RorResponse) -> Option<String> {
-        response
-            .items
-            .iter()
-            .find(|item| item.chosen == Some(true))
-            .and_then(|item| item.organization.as_ref())
-            .map(|org| org.id.clone())
     }
 }

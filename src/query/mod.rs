@@ -1,37 +1,19 @@
 use anyhow::{Context, Result};
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
-use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info};
-use xxhash_rust::xxh3::xxh3_64;
+
+use crate::{hash_affiliation, RorMatch, RorMatchFailed};
 
 mod checkpoint;
 mod client;
 pub use checkpoint::Checkpoint;
 pub use client::RorClient;
-
-fn hash_affiliation(affiliation: &str) -> String {
-    format!("{:016x}", xxh3_64(affiliation.as_bytes()))
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RorMatch {
-    affiliation: String,
-    affiliation_hash: String,
-    ror_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RorMatchFailed {
-    affiliation: String,
-    affiliation_hash: String,
-    error: String,
-}
 
 #[derive(Args)]
 pub struct QueryArgs {
@@ -43,9 +25,13 @@ pub struct QueryArgs {
     #[arg(short, long)]
     pub output: PathBuf,
 
-    /// ROR API base URL
-    #[arg(short = 'u', long, default_value = "http://localhost:9292")]
+    /// Match service base URL
+    #[arg(short = 'u', long, default_value = "http://localhost:8000")]
     pub base_url: String,
+
+    /// Task name for the match endpoint
+    #[arg(long, default_value = "affiliation")]
+    pub task: String,
 
     /// Concurrent requests
     #[arg(short, long, default_value = "50")]
@@ -58,10 +44,6 @@ pub struct QueryArgs {
     /// Resume from checkpoint
     #[arg(short, long)]
     pub resume: bool,
-
-    /// Enable fallback to standard affiliation endpoint
-    #[arg(short, long)]
-    pub fallback_multi: bool,
 }
 
 pub fn run(args: QueryArgs) -> Result<()> {
@@ -158,8 +140,8 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
         args.timeout,
     ));
 
+    let task = args.task;
     let mut handles = Vec::with_capacity(total);
-    let fallback_multi = args.fallback_multi;
 
     for (affiliation, hash) in to_process {
         let client = Arc::clone(&client);
@@ -167,15 +149,17 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
         let failed_writer = Arc::clone(&failed_writer);
         let checkpoint = Arc::clone(&checkpoint);
         let pb = pb.clone();
+        let task = task.clone();
 
         let handle = tokio::spawn(async move {
 
-            match client.query_affiliation(&affiliation, fallback_multi).await {
-                Ok(Some(ror_id)) => {
+            match client.query_affiliation(&affiliation, &task).await {
+                Ok(Some((ror_id, confidence))) => {
                     let match_record = RorMatch {
                         affiliation: affiliation.clone(),
                         affiliation_hash: hash.clone(),
                         ror_id,
+                        confidence,
                     };
 
                     let mut writer = matches_writer.lock().await;

@@ -6,102 +6,60 @@ use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn test_query_ror_single_search_success() {
+async fn test_query_marple_match_success() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
-        .and(path("/v2/organizations"))
-        .and(query_param("single_search", ""))
+        .and(path("/match"))
+        .and(query_param("task", "affiliation"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "items": [
-                {
-                    "chosen": true,
-                    "organization": {
-                        "id": "https://ror.org/052gg0110"
+            "message": {
+                "items": [
+                    {
+                        "id": "https://ror.org/052gg0110",
+                        "confidence": 0.92,
+                        "strategies": ["affiliation-single-search"]
                     }
-                }
-            ]
+                ]
+            }
         })))
         .mount(&mock_server)
         .await;
 
-    let client = datacite_ror::query::RorClient::new(
-        mock_server.uri(),
-        50,
-        30,
-    );
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 50, 30);
 
-    let result = client.query_affiliation("University of Oxford", false).await;
+    let result = client
+        .query_affiliation("University of Oxford", "affiliation")
+        .await;
 
     assert!(result.is_ok());
-    let ror_id = result.unwrap();
-    assert_eq!(ror_id, Some("https://ror.org/052gg0110".to_string()));
+    let matched = result.unwrap();
+    assert_eq!(
+        matched,
+        Some(("https://ror.org/052gg0110".to_string(), 0.92))
+    );
 }
 
 #[tokio::test]
-async fn test_query_ror_no_match_returns_none() {
+async fn test_query_marple_no_match_returns_none() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
-        .and(path("/v2/organizations"))
+        .and(path("/match"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "items": []
+            "message": { "items": [] }
         })))
         .mount(&mock_server)
         .await;
 
-    let client = datacite_ror::query::RorClient::new(
-        mock_server.uri(),
-        50,
-        30,
-    );
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 50, 30);
 
-    let result = client.query_affiliation("Unknown Institution", false).await;
+    let result = client
+        .query_affiliation("Unknown Institution", "affiliation")
+        .await;
 
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), None);
-}
-
-#[tokio::test]
-async fn test_query_ror_retry_on_500() {
-    let mock_server = MockServer::start().await;
-
-    // First request with quotes returns 500, second without quotes succeeds
-    Mock::given(method("GET"))
-        .and(path("/v2/organizations"))
-        .and(query_param("affiliation", "\"Test University\""))
-        .respond_with(ResponseTemplate::new(500))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-
-    Mock::given(method("GET"))
-        .and(path("/v2/organizations"))
-        .and(query_param("affiliation", "Test University"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "items": [
-                {
-                    "chosen": true,
-                    "organization": {
-                        "id": "https://ror.org/abc123"
-                    }
-                }
-            ]
-        })))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-
-    let client = datacite_ror::query::RorClient::new(
-        mock_server.uri(),
-        50,
-        30,
-    );
-
-    let result = client.query_affiliation("Test University", false).await;
-
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap(), Some("https://ror.org/abc123".to_string()));
 }
 
 #[test]
@@ -150,16 +108,17 @@ async fn test_query_full_pipeline() {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
-        .and(path("/v2/organizations"))
+        .and(path("/match"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "items": [
-                {
-                    "chosen": true,
-                    "organization": {
-                        "id": "https://ror.org/test123"
+            "message": {
+                "items": [
+                    {
+                        "id": "https://ror.org/test123",
+                        "confidence": 0.85,
+                        "strategies": ["affiliation-single-search"]
                     }
-                }
-            ]
+                ]
+            }
         })))
         .mount(&mock_server)
         .await;
@@ -168,10 +127,10 @@ async fn test_query_full_pipeline() {
         input: input_dir,
         output: output_dir.clone(),
         base_url: mock_server.uri(),
+        task: "affiliation".to_string(),
         concurrency: 2,
         timeout: 5,
         resume: false,
-        fallback_multi: false,
     };
 
     datacite_ror::query::run_async(args).await.unwrap();
@@ -187,6 +146,10 @@ async fn test_query_full_pipeline() {
         .collect();
 
     assert_eq!(matches.len(), 2);
+    for m in &matches {
+        assert_eq!(m.ror_id, "https://ror.org/test123");
+        assert_eq!(m.confidence, 0.85);
+    }
 
     let checkpoint_file = output_dir.join("ror_matches.checkpoint");
     assert!(checkpoint_file.exists());
