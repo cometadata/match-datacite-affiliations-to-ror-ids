@@ -51,15 +51,32 @@ async fn test_full_pipeline_extract_query_reconcile() {
 
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("GET"))
-        .and(path("/match"))
+    Mock::given(method("POST"))
+        .and(path("/match/bulk"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "message": {
                 "items": [
                     {
-                        "id": "https://ror.org/03vek6s52",
-                        "confidence": 0.9,
-                        "strategies": ["affiliation-single-search"]
+                        "items": [
+                            {
+                                "id": "https://ror.org/03vek6s52",
+                                "confidence": 0.9,
+                                "strategies": ["affiliation-single-search"]
+                            }
+                        ],
+                        "target_data": "ROR v1.67",
+                        "strategy": "affiliation-single-search"
+                    },
+                    {
+                        "items": [
+                            {
+                                "id": "https://ror.org/03vek6s52",
+                                "confidence": 0.9,
+                                "strategies": ["affiliation-single-search"]
+                            }
+                        ],
+                        "target_data": "ROR v1.67",
+                        "strategy": "affiliation-single-search"
                     }
                 ]
             }
@@ -73,6 +90,7 @@ async fn test_full_pipeline_extract_query_reconcile() {
         base_url: mock_server.uri(),
         task: "affiliation".to_string(),
         concurrency: 2,
+        batch_size: 50,
         timeout: 5,
         resume: false,
     };

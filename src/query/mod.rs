@@ -1,12 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Args;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{error, info};
+use tokio::sync::{Mutex, Semaphore};
+use tracing::{error, info, warn};
 
 use crate::{hash_affiliation, RorMatch, RorMatchFailed};
 
@@ -33,9 +33,13 @@ pub struct QueryArgs {
     #[arg(long, default_value = "affiliation")]
     pub task: String,
 
-    /// Concurrent requests
-    #[arg(short, long, default_value = "50")]
+    /// Concurrent in-flight bulk requests; tune to match Marple's worker count
+    #[arg(short, long, default_value = "25")]
     pub concurrency: usize,
+
+    /// Inputs per bulk request (server cap is 50)
+    #[arg(short = 'b', long, default_value = "50")]
+    pub batch_size: usize,
 
     /// Request timeout in seconds
     #[arg(short, long, default_value = "30")]
@@ -56,6 +60,16 @@ pub fn run(args: QueryArgs) -> Result<()> {
 }
 
 pub async fn run_async(args: QueryArgs) -> Result<()> {
+    if args.batch_size == 0 {
+        return Err(anyhow!("--batch-size must be at least 1"));
+    }
+    if args.batch_size > 50 {
+        warn!(
+            "--batch-size {} exceeds default Marple cap of 50; expect HTTP 413 unless MARPLE_MAX_BATCH_SIZE is raised",
+            args.batch_size
+        );
+    }
+
     fs::create_dir_all(&args.output)
         .context("Failed to create output directory")?;
 
@@ -134,83 +148,103 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
             .progress_chars("#>-"),
     );
 
-    let client = Arc::new(RorClient::new(
-        args.base_url.clone(),
-        args.concurrency,
-        args.timeout,
-    ));
+    let client = Arc::new(RorClient::new(args.base_url.clone(), args.timeout));
+    let semaphore = Arc::new(Semaphore::new(args.concurrency));
 
     let task = args.task;
-    let mut handles = Vec::with_capacity(total);
+    let batches: Vec<Vec<(String, String)>> = to_process
+        .chunks(args.batch_size)
+        .map(|c| c.to_vec())
+        .collect();
+    let mut handles = Vec::with_capacity(batches.len());
 
-    for (affiliation, hash) in to_process {
+    for batch in batches {
         let client = Arc::clone(&client);
         let matches_writer = Arc::clone(&matches_writer);
         let failed_writer = Arc::clone(&failed_writer);
         let checkpoint = Arc::clone(&checkpoint);
+        let semaphore = Arc::clone(&semaphore);
         let pb = pb.clone();
         let task = task.clone();
 
         let handle = tokio::spawn(async move {
-
-            match client.query_affiliation(&affiliation, &task).await {
-                Ok(Some((ror_id, confidence))) => {
-                    let match_record = RorMatch {
-                        affiliation: affiliation.clone(),
-                        affiliation_hash: hash.clone(),
-                        ror_id,
-                        confidence,
-                    };
-
-                    let mut writer = matches_writer.lock().await;
-                    if let Err(e) = writeln!(
-                        writer,
-                        "{}",
-                        serde_json::to_string(&match_record).unwrap()
-                    ) {
-                        error!("Failed to write match: {}", e);
-                    }
+            let _permit = match semaphore.acquire().await {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("Semaphore closed: {}", e);
+                    return;
                 }
-                Ok(None) => {
-                    let failed_record = RorMatchFailed {
-                        affiliation: affiliation.clone(),
-                        affiliation_hash: hash.clone(),
-                        error: "No match found".to_string(),
-                    };
+            };
 
-                    let mut writer = failed_writer.lock().await;
-                    if let Err(e) = writeln!(
-                        writer,
-                        "{}",
-                        serde_json::to_string(&failed_record).unwrap()
-                    ) {
-                        error!("Failed to write failure: {}", e);
+            let inputs: Vec<String> = batch.iter().map(|(a, _)| a.clone()).collect();
+
+            match client.match_bulk(&inputs, &task).await {
+                Ok(results) => {
+                    let mut match_lines: Vec<String> = Vec::new();
+                    let mut failed_lines: Vec<String> = Vec::new();
+                    for ((aff, hash), res) in batch.iter().zip(results.into_iter()) {
+                        match res {
+                            Some((ror_id, confidence)) => {
+                                let rec = RorMatch {
+                                    affiliation: aff.clone(),
+                                    affiliation_hash: hash.clone(),
+                                    ror_id,
+                                    confidence,
+                                };
+                                match_lines.push(serde_json::to_string(&rec).unwrap());
+                            }
+                            None => {
+                                let rec = RorMatchFailed {
+                                    affiliation: aff.clone(),
+                                    affiliation_hash: hash.clone(),
+                                    error: "No match found".to_string(),
+                                };
+                                failed_lines.push(serde_json::to_string(&rec).unwrap());
+                            }
+                        }
+                    }
+
+                    if !match_lines.is_empty() {
+                        let mut writer = matches_writer.lock().await;
+                        for line in &match_lines {
+                            if let Err(e) = writeln!(writer, "{}", line) {
+                                error!("Failed to write match: {}", e);
+                            }
+                        }
+                    }
+                    if !failed_lines.is_empty() {
+                        let mut writer = failed_writer.lock().await;
+                        for line in &failed_lines {
+                            if let Err(e) = writeln!(writer, "{}", line) {
+                                error!("Failed to write failure: {}", e);
+                            }
+                        }
                     }
                 }
                 Err(e) => {
-                    let failed_record = RorMatchFailed {
-                        affiliation: affiliation.clone(),
-                        affiliation_hash: hash.clone(),
-                        error: e.to_string(),
-                    };
-
+                    let err_msg = format!("Batch error: {}", e);
                     let mut writer = failed_writer.lock().await;
-                    if let Err(e) = writeln!(
-                        writer,
-                        "{}",
-                        serde_json::to_string(&failed_record).unwrap()
-                    ) {
-                        error!("Failed to write failure: {}", e);
+                    for (aff, hash) in &batch {
+                        let rec = RorMatchFailed {
+                            affiliation: aff.clone(),
+                            affiliation_hash: hash.clone(),
+                            error: err_msg.clone(),
+                        };
+                        if let Err(e) = writeln!(writer, "{}", serde_json::to_string(&rec).unwrap()) {
+                            error!("Failed to write failure: {}", e);
+                        }
                     }
                 }
             }
 
             {
                 let mut cp = checkpoint.lock().await;
-                cp.mark_processed(&hash);
+                for (_, hash) in &batch {
+                    cp.mark_processed(hash);
+                }
             }
 
-            pb.inc(1);
+            pb.inc(batch.len() as u64);
         });
 
         handles.push(handle);

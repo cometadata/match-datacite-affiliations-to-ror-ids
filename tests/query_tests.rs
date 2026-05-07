@@ -2,23 +2,32 @@ use datacite_ror::RorMatch;
 use std::fs::{self, File};
 use std::io::BufRead;
 use tempfile::TempDir;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn test_query_marple_match_success() {
+async fn test_match_bulk_success() {
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("GET"))
-        .and(path("/match"))
+    Mock::given(method("POST"))
+        .and(path("/match/bulk"))
         .and(query_param("task", "affiliation"))
+        .and(body_json(serde_json::json!({
+            "inputs": ["University of Oxford"]
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "message": {
                 "items": [
                     {
-                        "id": "https://ror.org/052gg0110",
-                        "confidence": 0.92,
-                        "strategies": ["affiliation-single-search"]
+                        "items": [
+                            {
+                                "id": "https://ror.org/052gg0110",
+                                "confidence": 0.92,
+                                "strategies": ["affiliation-single-search"]
+                            }
+                        ],
+                        "target_data": "ROR v1.67",
+                        "strategy": "affiliation-single-search"
                     }
                 ]
             }
@@ -26,40 +35,110 @@ async fn test_query_marple_match_success() {
         .mount(&mock_server)
         .await;
 
-    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 50, 30);
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 30);
 
     let result = client
-        .query_affiliation("University of Oxford", "affiliation")
+        .match_bulk(&["University of Oxford".to_string()], "affiliation")
         .await;
 
     assert!(result.is_ok());
     let matched = result.unwrap();
     assert_eq!(
         matched,
-        Some(("https://ror.org/052gg0110".to_string(), 0.92))
+        vec![Some(("https://ror.org/052gg0110".to_string(), 0.92))]
     );
 }
 
 #[tokio::test]
-async fn test_query_marple_no_match_returns_none() {
+async fn test_match_bulk_no_match_returns_none_per_slot() {
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("GET"))
-        .and(path("/match"))
+    Mock::given(method("POST"))
+        .and(path("/match/bulk"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "message": { "items": [] }
+            "message": {
+                "items": [
+                    { "items": [], "target_data": "ROR v1.67", "strategy": "affiliation-single-search" }
+                ]
+            }
         })))
         .mount(&mock_server)
         .await;
 
-    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 50, 30);
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 30);
 
     let result = client
-        .query_affiliation("Unknown Institution", "affiliation")
+        .match_bulk(&["Unknown Institution".to_string()], "affiliation")
         .await;
 
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), None);
+    assert_eq!(result.unwrap(), vec![None]);
+}
+
+#[tokio::test]
+async fn test_match_bulk_preserves_order() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/match/bulk"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "message": {
+                "items": [
+                    {
+                        "items": [
+                            {
+                                "id": "https://ror.org/aaaaaaaaa",
+                                "confidence": 0.91,
+                                "strategies": ["s"]
+                            }
+                        ],
+                        "target_data": "ROR v1.67",
+                        "strategy": "s"
+                    },
+                    { "items": [], "target_data": "ROR v1.67", "strategy": "s" }
+                ]
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 30);
+
+    let result = client
+        .match_bulk(
+            &["Matched Org".to_string(), "Unknown".to_string()],
+            "affiliation",
+        )
+        .await;
+
+    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        vec![
+            Some(("https://ror.org/aaaaaaaaa".to_string(), 0.91)),
+            None,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_match_bulk_413_no_retry() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/match/bulk"))
+        .respond_with(ResponseTemplate::new(413).set_body_string("too big"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 30);
+
+    let inputs: Vec<String> = (0..200).map(|_| "x".to_string()).collect();
+    let result = client.match_bulk(&inputs, "affiliation").await;
+
+    assert!(result.is_err());
+    // Mock's `.expect(1)` is verified on drop — if the client retried, the test fails.
 }
 
 #[test]
@@ -107,15 +186,32 @@ async fn test_query_full_pipeline() {
 
     let mock_server = MockServer::start().await;
 
-    Mock::given(method("GET"))
-        .and(path("/match"))
+    Mock::given(method("POST"))
+        .and(path("/match/bulk"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "message": {
                 "items": [
                     {
-                        "id": "https://ror.org/test123",
-                        "confidence": 0.85,
-                        "strategies": ["affiliation-single-search"]
+                        "items": [
+                            {
+                                "id": "https://ror.org/test123",
+                                "confidence": 0.85,
+                                "strategies": ["affiliation-single-search"]
+                            }
+                        ],
+                        "target_data": "ROR v1.67",
+                        "strategy": "affiliation-single-search"
+                    },
+                    {
+                        "items": [
+                            {
+                                "id": "https://ror.org/test123",
+                                "confidence": 0.85,
+                                "strategies": ["affiliation-single-search"]
+                            }
+                        ],
+                        "target_data": "ROR v1.67",
+                        "strategy": "affiliation-single-search"
                     }
                 ]
             }
@@ -129,6 +225,7 @@ async fn test_query_full_pipeline() {
         base_url: mock_server.uri(),
         task: "affiliation".to_string(),
         concurrency: 2,
+        batch_size: 50,
         timeout: 5,
         resume: false,
     };
