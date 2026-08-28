@@ -41,12 +41,13 @@ async fn test_full_pipeline_extract_query_reconcile() {
     datacite_ror::extract::run(extract_args).unwrap();
 
     assert!(work_dir.join("unique_affiliations.json").exists());
-    assert!(work_dir.join("doi_author_affiliations.jsonl").exists());
+    assert!(work_dir.join("doi_affiliation_occurrences.jsonl").exists());
+    assert!(work_dir.join("dois.jsonl").exists());
+    assert!(work_dir.join("extraction_report.json").exists());
 
-    let affiliations: Vec<String> = serde_json::from_reader(
-        File::open(work_dir.join("unique_affiliations.json")).unwrap(),
-    )
-    .unwrap();
+    let affiliations: Vec<String> =
+        serde_json::from_reader(File::open(work_dir.join("unique_affiliations.json")).unwrap())
+            .unwrap();
     assert_eq!(affiliations.len(), 2);
 
     let mock_server = MockServer::start().await;
@@ -111,22 +112,19 @@ async fn test_full_pipeline_extract_query_reconcile() {
             for affiliation in &creator.affiliation {
                 assert_eq!(affiliation.affiliation_identifier_scheme, "ROR");
                 assert_eq!(affiliation.scheme_uri, "https://ror.org");
-                assert!(affiliation.affiliation_identifier.starts_with("https://ror.org/"));
-            }
-        }
-        for contributor in &record.contributors {
-            assert!(!contributor.contributor_type.is_empty());
-            for affiliation in &contributor.affiliation {
-                assert_eq!(affiliation.affiliation_identifier_scheme, "ROR");
-                assert_eq!(affiliation.scheme_uri, "https://ror.org");
-                assert!(affiliation.affiliation_identifier.starts_with("https://ror.org/"));
+                assert!(affiliation
+                    .affiliation_identifier
+                    .starts_with("https://ror.org/"));
             }
         }
     }
 
-    // paper1 should have a contributor (Editor One with Harvard)
-    let paper1 = records.iter().find(|r| r.doi == "10.1234/paper1").unwrap();
-    assert_eq!(paper1.contributors.len(), 1);
-    assert_eq!(paper1.contributors[0].name, "Editor One");
-    assert_eq!(paper1.contributors[0].contributor_type, "Editor");
+    // Canonical reconciliation is intentionally creator-only; contributor placements
+    // remain in the occurrence stream for aggregation but do not create enrichment.
+    let paper1: serde_json::Value = content
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .find(|record: &serde_json::Value| record["doi"] == "10.1234/paper1")
+        .unwrap();
+    assert!(paper1.get("contributors").is_none());
 }

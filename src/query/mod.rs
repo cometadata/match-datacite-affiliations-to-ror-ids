@@ -74,8 +74,7 @@ pub fn run(args: QueryArgs) -> Result<()> {
 }
 
 pub async fn run_async(args: QueryArgs) -> Result<()> {
-    fs::create_dir_all(&args.output)
-        .context("Failed to create output directory")?;
+    fs::create_dir_all(&args.output).context("Failed to create output directory")?;
 
     let affiliations_path = args.input.join("unique_affiliations.json");
     let affiliations_file = File::open(&affiliations_path)
@@ -87,8 +86,7 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
 
     let checkpoint_path = args.output.join("ror_matches.checkpoint");
     let checkpoint = if args.resume && checkpoint_path.exists() {
-        Checkpoint::load(&checkpoint_path)
-            .context("Failed to load checkpoint")?
+        Checkpoint::load(&checkpoint_path).context("Failed to load checkpoint")?
     } else {
         Checkpoint::new(&checkpoint_path)
     };
@@ -126,8 +124,7 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
             .open(&matches_path)
             .context("Failed to open matches file for append")?
     } else {
-        File::create(&matches_path)
-            .context("Failed to create matches file")?
+        File::create(&matches_path).context("Failed to create matches file")?
     };
 
     let failed_file = if args.resume && failed_path.exists() {
@@ -136,8 +133,7 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
             .open(&failed_path)
             .context("Failed to open failed file for append")?
     } else {
-        File::create(&failed_path)
-            .context("Failed to create failed file")?
+        File::create(&failed_path).context("Failed to create failed file")?
     };
 
     let matches_writer = Arc::new(Mutex::new(BufWriter::new(matches_file)));
@@ -147,7 +143,9 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
     let pb = ProgressBar::new(total as u64);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+            )
             .unwrap()
             .progress_chars("#>-"),
     );
@@ -169,7 +167,6 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
         let pb = pb.clone();
 
         let handle = tokio::spawn(async move {
-
             match client.query_affiliation(&affiliation, fallback_multi).await {
                 Ok(Some(ror_id)) => {
                     let match_record = RorMatch {
@@ -179,11 +176,9 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
                     };
 
                     let mut writer = matches_writer.lock().await;
-                    if let Err(e) = writeln!(
-                        writer,
-                        "{}",
-                        serde_json::to_string(&match_record).unwrap()
-                    ) {
+                    if let Err(e) =
+                        writeln!(writer, "{}", serde_json::to_string(&match_record).unwrap())
+                    {
                         error!("Failed to write match: {}", e);
                     }
                 }
@@ -195,11 +190,9 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
                     };
 
                     let mut writer = failed_writer.lock().await;
-                    if let Err(e) = writeln!(
-                        writer,
-                        "{}",
-                        serde_json::to_string(&failed_record).unwrap()
-                    ) {
+                    if let Err(e) =
+                        writeln!(writer, "{}", serde_json::to_string(&failed_record).unwrap())
+                    {
                         error!("Failed to write failure: {}", e);
                     }
                 }
@@ -211,11 +204,9 @@ pub async fn run_async(args: QueryArgs) -> Result<()> {
                     };
 
                     let mut writer = failed_writer.lock().await;
-                    if let Err(e) = writeln!(
-                        writer,
-                        "{}",
-                        serde_json::to_string(&failed_record).unwrap()
-                    ) {
+                    if let Err(e) =
+                        writeln!(writer, "{}", serde_json::to_string(&failed_record).unwrap())
+                    {
                         error!("Failed to write failure: {}", e);
                     }
                 }

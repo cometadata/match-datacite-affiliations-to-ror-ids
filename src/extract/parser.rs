@@ -1,4 +1,5 @@
-use crate::{hash_affiliation, AuthorAffiliationRecord, RecordField};
+use crate::{hash_affiliation, AffiliationOccurrenceRecord, ParsedDataCiteRecord, PartyType};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 fn extract_doi(record: &Value) -> Option<String> {
@@ -14,15 +15,17 @@ fn extract_doi(record: &Value) -> Option<String> {
         })
 }
 
-/// Handles both object format {"name": "..."} and plain string format
-fn extract_affiliation_name(affiliation: &Value) -> Option<String> {
+fn extract_affiliation_name(affiliation: &Value) -> Result<String> {
     match affiliation {
-        Value::String(s) => Some(s.clone()),
+        Value::String(s) => Ok(s.clone()),
         Value::Object(_) => affiliation
             .get("name")
             .and_then(Value::as_str)
-            .map(String::from),
-        _ => None,
+            .map(String::from)
+            .ok_or_else(|| anyhow!("affiliation objects must contain a string name")),
+        _ => Err(anyhow!(
+            "affiliations must be strings or objects with a string name"
+        )),
     }
 }
 
@@ -45,72 +48,103 @@ fn extract_existing_ror_id(affiliation: &Value) -> Option<String> {
     }
 }
 
-fn extract_person_affiliations(
+fn extract_party_occurrences(
+    record: &Value,
     doi: &str,
-    persons: &[Value],
-    field: RecordField,
-) -> Vec<AuthorAffiliationRecord> {
-    let mut results = Vec::new();
+    party_type: PartyType,
+    party_pointer: &str,
+) -> Result<(Vec<AffiliationOccurrenceRecord>, u64)> {
+    let Some(parties) = record.pointer(party_pointer) else {
+        return Ok((Vec::new(), 0));
+    };
+    let parties = parties
+        .as_array()
+        .ok_or_else(|| anyhow!("{party_pointer} must be an array when present"))?;
 
-    for (idx, person) in persons.iter().enumerate() {
-        if person.get("name").and_then(Value::as_str).is_none() {
-            continue;
-        }
+    let mut occurrences = Vec::new();
+    let mut excluded_zero_length_affiliations = 0;
 
-        let source_raw = {
-            let mut raw = person.clone();
-            if let Some(obj) = raw.as_object_mut() {
-                obj.remove("affiliation");
-            }
-            raw
-        };
-
-        let affiliations = match person.get("affiliation") {
-            Some(Value::Array(arr)) => arr,
-            _ => continue,
-        };
-
-        for (affiliation_idx, affiliation) in affiliations.iter().enumerate() {
-            if let Some(affiliation_name) = extract_affiliation_name(affiliation) {
-                if !affiliation_name.is_empty() {
-                    let affiliation_raw = match affiliation {
-                        Value::Object(_) => Some(affiliation.clone()),
-                        _ => None,
-                    };
-                    results.push(AuthorAffiliationRecord {
-                        doi: doi.to_string(),
-                        field: field.clone(),
-                        idx,
-                        source_raw: source_raw.clone(),
-                        affiliation_idx,
-                        affiliation: affiliation_name.clone(),
-                        affiliation_hash: hash_affiliation(&affiliation_name),
-                        affiliation_raw,
-                        existing_ror_id: extract_existing_ror_id(affiliation),
-                    });
+    for (party_index, party) in parties.iter().enumerate() {
+        let party_raw = match party {
+            Value::Object(_) => {
+                let mut raw = party.clone();
+                if let Some(object) = raw.as_object_mut() {
+                    object.remove("affiliation");
                 }
+                Some(raw)
             }
+            _ => None,
+        };
+        let party_name = party.get("name").and_then(Value::as_str).map(String::from);
+        let party_name_type = party
+            .get("nameType")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let party_given_name = party
+            .get("givenName")
+            .and_then(Value::as_str)
+            .map(String::from);
+        let party_family_name = party
+            .get("familyName")
+            .and_then(Value::as_str)
+            .map(String::from);
+
+        let Some(affiliations) = party.get("affiliation") else {
+            continue;
+        };
+        let affiliations = affiliations
+            .as_array()
+            .ok_or_else(|| anyhow!("affiliation must be an array when present"))?;
+
+        for (affiliation_index, affiliation) in affiliations.iter().enumerate() {
+            let affiliation_name = extract_affiliation_name(affiliation)?;
+            if affiliation_name.is_empty() {
+                excluded_zero_length_affiliations += 1;
+                continue;
+            }
+
+            occurrences.push(AffiliationOccurrenceRecord {
+                doi: doi.to_string(),
+                party_type,
+                party_index,
+                party_name: party_name.clone(),
+                party_name_type: party_name_type.clone(),
+                party_given_name: party_given_name.clone(),
+                party_family_name: party_family_name.clone(),
+                party_raw: party_raw.clone(),
+                affiliation_index,
+                affiliation_hash: hash_affiliation(&affiliation_name),
+                affiliation: affiliation_name,
+                affiliation_raw: match affiliation {
+                    Value::Object(_) => Some(affiliation.clone()),
+                    _ => None,
+                },
+                existing_ror_id: extract_existing_ror_id(affiliation),
+            });
         }
     }
 
-    results
+    Ok((occurrences, excluded_zero_length_affiliations))
 }
 
-pub fn parse_affiliations(record: &Value) -> Vec<AuthorAffiliationRecord> {
-    let doi = match extract_doi(record) {
-        Some(d) => d,
-        None => return Vec::new(),
-    };
+pub fn parse_affiliations(record: &Value) -> Result<ParsedDataCiteRecord> {
+    let doi = extract_doi(record).ok_or_else(|| anyhow!("record is missing a DOI"))?;
+    let (mut occurrences, mut excluded_zero_length_affiliations) =
+        extract_party_occurrences(record, &doi, PartyType::Creator, "/attributes/creators")?;
+    let (contributor_occurrences, contributor_excluded_zero_length_affiliations) =
+        extract_party_occurrences(
+            record,
+            &doi,
+            PartyType::Contributor,
+            "/attributes/contributors",
+        )?;
 
-    let mut results = Vec::new();
+    occurrences.extend(contributor_occurrences);
+    excluded_zero_length_affiliations += contributor_excluded_zero_length_affiliations;
 
-    if let Some(Value::Array(creators)) = record.pointer("/attributes/creators") {
-        results.extend(extract_person_affiliations(&doi, creators, RecordField::Creators));
-    }
-
-    if let Some(Value::Array(contributors)) = record.pointer("/attributes/contributors") {
-        results.extend(extract_person_affiliations(&doi, contributors, RecordField::Contributors));
-    }
-
-    results
+    Ok(ParsedDataCiteRecord {
+        doi,
+        occurrences,
+        excluded_zero_length_affiliations,
+    })
 }

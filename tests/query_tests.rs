@@ -25,13 +25,11 @@ async fn test_query_ror_single_search_success() {
         .mount(&mock_server)
         .await;
 
-    let client = datacite_ror::query::RorClient::new(
-        mock_server.uri(),
-        50,
-        30,
-    );
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 50, 30);
 
-    let result = client.query_affiliation("University of Oxford", false).await;
+    let result = client
+        .query_affiliation("University of Oxford", false)
+        .await;
 
     assert!(result.is_ok());
     let ror_id = result.unwrap();
@@ -50,11 +48,7 @@ async fn test_query_ror_no_match_returns_none() {
         .mount(&mock_server)
         .await;
 
-    let client = datacite_ror::query::RorClient::new(
-        mock_server.uri(),
-        50,
-        30,
-    );
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 50, 30);
 
     let result = client.query_affiliation("Unknown Institution", false).await;
 
@@ -92,11 +86,7 @@ async fn test_query_ror_retry_on_500() {
         .mount(&mock_server)
         .await;
 
-    let client = datacite_ror::query::RorClient::new(
-        mock_server.uri(),
-        50,
-        30,
-    );
+    let client = datacite_ror::query::RorClient::new(mock_server.uri(), 50, 30);
 
     let result = client.query_affiliation("Test University", false).await;
 

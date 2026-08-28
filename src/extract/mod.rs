@@ -1,10 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Args;
 use crossbeam_channel::bounded;
 use flate2::read::GzDecoder;
 use glob::glob;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
-use crate::AuthorAffiliationRecord;
+use crate::{AffiliationOccurrenceRecord, PartyType};
 
 mod parser;
 pub use parser::parse_affiliations;
@@ -42,18 +43,76 @@ pub fn find_jsonl_gz_files<P: AsRef<Path>>(directory: P) -> Result<Vec<PathBuf>>
     Ok(glob(&pattern_str)?.filter_map(Result::ok).collect())
 }
 
+#[derive(Debug, Default, Serialize)]
+struct FileExtractionStats {
+    valid_records: u64,
+    valid_dois: u64,
+    occurrence_count: u64,
+    creator_occurrences: u64,
+    contributor_occurrences: u64,
+    excluded_zero_length_affiliations: u64,
+    malformed_json_records: u64,
+    malformed_records: u64,
+}
+
+#[derive(Serialize)]
+struct DoiRecord {
+    doi: String,
+}
+
+impl FileExtractionStats {
+    fn checked_add_assign(&mut self, other: &Self) -> Result<()> {
+        self.valid_records = self
+            .valid_records
+            .checked_add(other.valid_records)
+            .ok_or_else(|| anyhow!("valid_records total overflowed"))?;
+        self.valid_dois = self
+            .valid_dois
+            .checked_add(other.valid_dois)
+            .ok_or_else(|| anyhow!("valid_dois total overflowed"))?;
+        self.occurrence_count = self
+            .occurrence_count
+            .checked_add(other.occurrence_count)
+            .ok_or_else(|| anyhow!("occurrence_count total overflowed"))?;
+        self.creator_occurrences = self
+            .creator_occurrences
+            .checked_add(other.creator_occurrences)
+            .ok_or_else(|| anyhow!("creator_occurrences total overflowed"))?;
+        self.contributor_occurrences = self
+            .contributor_occurrences
+            .checked_add(other.contributor_occurrences)
+            .ok_or_else(|| anyhow!("contributor_occurrences total overflowed"))?;
+        self.excluded_zero_length_affiliations = self
+            .excluded_zero_length_affiliations
+            .checked_add(other.excluded_zero_length_affiliations)
+            .ok_or_else(|| anyhow!("excluded_zero_length_affiliations total overflowed"))?;
+        self.malformed_json_records = self
+            .malformed_json_records
+            .checked_add(other.malformed_json_records)
+            .ok_or_else(|| anyhow!("malformed_json_records total overflowed"))?;
+        self.malformed_records = self
+            .malformed_records
+            .checked_add(other.malformed_records)
+            .ok_or_else(|| anyhow!("malformed_records total overflowed"))?;
+        Ok(())
+    }
+}
+
 fn process_file(
     filepath: &Path,
     unique_affiliations: &Mutex<HashSet<String>>,
-    tx: &crossbeam_channel::Sender<Vec<AuthorAffiliationRecord>>,
+    occurrence_tx: &crossbeam_channel::Sender<Vec<AffiliationOccurrenceRecord>>,
+    doi_tx: &crossbeam_channel::Sender<Vec<DoiRecord>>,
     batch_size: usize,
-) -> Result<()> {
-    let file = File::open(filepath)
-        .with_context(|| format!("Failed to open {}", filepath.display()))?;
+) -> Result<FileExtractionStats> {
+    let file =
+        File::open(filepath).with_context(|| format!("Failed to open {}", filepath.display()))?;
     let decoder = GzDecoder::new(file);
     let reader = BufReader::new(decoder);
 
-    let mut batch = Vec::with_capacity(batch_size);
+    let mut occurrence_batch = Vec::with_capacity(batch_size);
+    let mut doi_batch: Vec<DoiRecord> = Vec::with_capacity(batch_size);
+    let mut stats = FileExtractionStats::default();
 
     for line in reader.lines() {
         let line_str = line?;
@@ -61,30 +120,86 @@ fn process_file(
             continue;
         }
 
-        if let Ok(record) = serde_json::from_str::<serde_json::Value>(&line_str) {
-            let affiliations = parse_affiliations(&record);
+        match serde_json::from_str::<serde_json::Value>(&line_str) {
+            Ok(record) => match parse_affiliations(&record) {
+                Ok(parsed) => {
+                    stats.valid_records += 1;
+                    stats.valid_dois += 1;
+                    stats.excluded_zero_length_affiliations +=
+                        parsed.excluded_zero_length_affiliations;
+                    doi_batch.push(DoiRecord { doi: parsed.doi });
 
-            if !affiliations.is_empty() {
-                let mut unique = unique_affiliations.lock().unwrap();
-                for aff in &affiliations {
-                    unique.insert(aff.affiliation.clone());
+                    for occurrence in parsed.occurrences {
+                        stats.occurrence_count += 1;
+                        match occurrence.party_type {
+                            PartyType::Creator => stats.creator_occurrences += 1,
+                            PartyType::Contributor => stats.contributor_occurrences += 1,
+                        }
+                        unique_affiliations
+                            .lock()
+                            .unwrap()
+                            .insert(occurrence.affiliation.clone());
+                        occurrence_batch.push(occurrence);
+                    }
                 }
+                Err(error) => {
+                    stats.malformed_records += 1;
+                    error!("Failed to parse DataCite affiliations: {}", error);
+                }
+            },
+            Err(error) => {
+                stats.malformed_json_records += 1;
+                error!("Failed to parse JSON record: {}", error);
             }
+        }
 
-            batch.extend(affiliations);
-
-            if batch.len() >= batch_size
-                && tx.send(std::mem::take(&mut batch)).is_err()
-            {
-                break;
-            }
+        if occurrence_batch.len() >= batch_size {
+            occurrence_tx
+                .send(std::mem::take(&mut occurrence_batch))
+                .map_err(|_| anyhow!("occurrence writer stopped before extraction completed"))?;
+        }
+        if doi_batch.len() >= batch_size {
+            doi_tx
+                .send(std::mem::take(&mut doi_batch))
+                .map_err(|_| anyhow!("DOI writer stopped before extraction completed"))?;
         }
     }
 
-    if !batch.is_empty() {
-        let _ = tx.send(batch);
+    if !occurrence_batch.is_empty() {
+        occurrence_tx
+            .send(occurrence_batch)
+            .map_err(|_| anyhow!("occurrence writer stopped before extraction completed"))?;
+    }
+    if !doi_batch.is_empty() {
+        doi_tx
+            .send(doi_batch)
+            .map_err(|_| anyhow!("DOI writer stopped before extraction completed"))?;
     }
 
+    Ok(stats)
+}
+
+fn write_jsonl<T: Serialize>(path: PathBuf, rx: crossbeam_channel::Receiver<Vec<T>>) -> Result<()> {
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+
+    while let Ok(batch) = rx.recv() {
+        for record in batch {
+            serde_json::to_writer(&mut writer, &record)?;
+            writer.write_all(b"\n")?;
+        }
+    }
+
+    writer.flush()?;
+    writer.into_inner()?.sync_all()?;
+    Ok(())
+}
+
+fn write_report(path: PathBuf, stats: &FileExtractionStats) -> Result<()> {
+    let mut file = File::create(path)?;
+    serde_json::to_writer(&mut file, stats)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
     Ok(())
 }
 
@@ -112,10 +227,6 @@ pub fn run(args: ExtractArgs) -> Result<()> {
 
     let files = find_jsonl_gz_files(&args.input)?;
     info!("Found {} files to process", files.len());
-    if files.is_empty() {
-        return Ok(());
-    }
-
     let progress = ProgressBar::new(files.len() as u64);
     progress.set_style(
         ProgressStyle::default_bar()
@@ -124,47 +235,99 @@ pub fn run(args: ExtractArgs) -> Result<()> {
     );
 
     let unique_affiliations: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-    let (tx, rx) = bounded::<Vec<AuthorAffiliationRecord>>(num_threads * 4);
+    let channel_capacity = num_threads.max(1).saturating_mul(4);
+    let (occurrence_tx, occurrence_rx) =
+        bounded::<Vec<AffiliationOccurrenceRecord>>(channel_capacity);
+    let (doi_tx, doi_rx) = bounded::<Vec<DoiRecord>>(channel_capacity);
 
-    let output_path = args.output.join("doi_author_affiliations.jsonl");
-    let writer_handle = std::thread::spawn(move || -> Result<()> {
-        let file = File::create(&output_path)?;
-        let mut writer = BufWriter::new(file);
-
-        while let Ok(batch) = rx.recv() {
-            for record in batch {
-                serde_json::to_writer(&mut writer, &record)?;
-                writer.write_all(b"\n")?;
-            }
-        }
-
-        writer.flush()?;
-        Ok(())
+    let occurrence_writer = std::thread::spawn({
+        let output_path = args.output.join("doi_affiliation_occurrences.jsonl");
+        move || write_jsonl(output_path, occurrence_rx)
+    });
+    let doi_writer = std::thread::spawn({
+        let output_path = args.output.join("dois.jsonl");
+        move || write_jsonl(output_path, doi_rx)
     });
 
     let unique_ref = Arc::clone(&unique_affiliations);
-    files.par_iter().for_each_with(tx.clone(), |tx, filepath| {
-        if let Err(e) = process_file(filepath, &unique_ref, tx, args.batch_size) {
-            error!("Error processing {}: {}", filepath.display(), e);
-        }
-        progress.inc(1);
-    });
+    let file_results: Vec<Result<FileExtractionStats>> = files
+        .par_iter()
+        .map(|filepath| {
+            let result = process_file(
+                filepath,
+                &unique_ref,
+                &occurrence_tx,
+                &doi_tx,
+                args.batch_size.max(1),
+            );
+            progress.inc(1);
+            result.with_context(|| format!("Failed to process {}", filepath.display()))
+        })
+        .collect();
 
-    drop(tx);
-    writer_handle.join().unwrap()?;
+    drop(occurrence_tx);
+    drop(doi_tx);
+    let occurrence_writer_result = occurrence_writer
+        .join()
+        .unwrap_or_else(|_| Err(anyhow!("occurrence writer thread panicked")));
+    let doi_writer_result = doi_writer
+        .join()
+        .unwrap_or_else(|_| Err(anyhow!("DOI writer thread panicked")));
     progress.finish();
 
-    let unique = unique_affiliations.lock().unwrap();
-    let affiliations_vec: Vec<&String> = unique.iter().collect();
-    let affiliations_path = args.output.join("unique_affiliations.json");
-    let file = File::create(&affiliations_path)?;
-    serde_json::to_writer(file, &affiliations_vec)?;
+    let mut stats = FileExtractionStats::default();
+    let mut processing_error = None;
+    for file_result in file_results {
+        match file_result {
+            Ok(file_stats) => {
+                if let Err(error) = stats.checked_add_assign(&file_stats) {
+                    processing_error.get_or_insert(error);
+                }
+            }
+            Err(error) => {
+                error!("{}", error);
+                processing_error.get_or_insert(error);
+            }
+        }
+    }
+    if let Err(error) = occurrence_writer_result {
+        processing_error.get_or_insert(error);
+    }
+    if let Err(error) = doi_writer_result {
+        processing_error.get_or_insert(error);
+    }
 
-    info!(
-        "Extracted {} unique affiliations",
-        affiliations_vec.len()
-    );
+    write_report(args.output.join("extraction_report.json"), &stats)?;
+
+    let unique_result = (|| -> Result<usize> {
+        let unique = unique_affiliations.lock().unwrap();
+        let affiliations_vec: Vec<&String> = unique.iter().collect();
+        let affiliations_path = args.output.join("unique_affiliations.json");
+        let file = File::create(&affiliations_path)?;
+        serde_json::to_writer(file, &affiliations_vec)?;
+        Ok(affiliations_vec.len())
+    })();
+    let unique_affiliation_count = match unique_result {
+        Ok(count) => count,
+        Err(error) => {
+            processing_error.get_or_insert(error);
+            0
+        }
+    };
+
+    info!("Extracted {} unique affiliations", unique_affiliation_count);
     info!("Output: {}", args.output.display());
+
+    if let Some(error) = processing_error {
+        return Err(error);
+    }
+    if stats.malformed_json_records != 0 || stats.malformed_records != 0 {
+        return Err(anyhow!(
+            "Extraction completed with {} malformed JSON record(s) and {} malformed record(s)",
+            stats.malformed_json_records,
+            stats.malformed_records
+        ));
+    }
 
     Ok(())
 }
