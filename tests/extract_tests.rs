@@ -362,6 +362,8 @@ fn test_extract_reports_partial_stats_after_late_gzip_read_error() {
     assert_eq!(report["valid_records"], 1);
     assert_eq!(report["valid_dois"], 1);
     assert_eq!(report["occurrence_count"], 1);
+    assert_eq!(report["processed_files"], 0);
+    assert_eq!(report["processing_complete"], false);
     assert_eq!(
         fs::read_to_string(output_dir.join("dois.jsonl"))
             .unwrap()
