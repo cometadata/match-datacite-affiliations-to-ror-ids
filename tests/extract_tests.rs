@@ -326,6 +326,79 @@ fn test_extract_writes_report_before_returning_late_output_error() {
 }
 
 #[test]
+fn test_extract_reports_partial_stats_after_late_gzip_read_error() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_dir = temp_dir.path().join("input");
+    let output_dir = temp_dir.path().join("output");
+    fs::create_dir_all(&input_dir).unwrap();
+    let content = format!(
+        "{}\n{}",
+        r#"{"id":"10.1234/partial","attributes":{"creators":[{"name":"Creator","affiliation":["University"]}]}}"#,
+        "x".repeat(20_000)
+    );
+    create_test_file(&input_dir, "partial.jsonl.gz", &content);
+    let gzip_path = input_dir.join("partial.jsonl.gz");
+    let mut bytes = fs::read(&gzip_path).unwrap();
+    bytes.truncate(bytes.len() - 4);
+    fs::write(&gzip_path, bytes).unwrap();
+
+    assert!(
+        datacite_ror::extract::run(datacite_ror::extract::ExtractArgs {
+            input: input_dir,
+            output: output_dir.clone(),
+            threads: 1,
+            batch_size: 1,
+        })
+        .is_err()
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_reader(File::open(output_dir.join("extraction_report.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["valid_records"], 1);
+    assert_eq!(report["valid_dois"], 1);
+    assert_eq!(report["occurrence_count"], 1);
+    assert_eq!(
+        fs::read_to_string(output_dir.join("dois.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(output_dir.join("doi_affiliation_occurrences.jsonl"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn test_legacy_public_records_preserve_raw_and_contributor_serialization_contracts() {
+    let legacy = datacite_ror::AuthorAffiliationRecord {
+        doi: "10.1234/legacy".to_string(),
+        field: datacite_ror::RecordField::Contributors,
+        idx: 2,
+        source_raw: serde_json::json!({"name":"Editor","lang":"en"}),
+        affiliation_idx: 1,
+        affiliation: "Legacy Institute".to_string(),
+        affiliation_hash: "legacyhash".to_string(),
+        affiliation_raw: Some(
+            serde_json::json!({"name":"Legacy Institute","affiliationIdentifierScheme":"ISNI"}),
+        ),
+        existing_ror_id: None,
+    };
+    let serialized = serde_json::to_value(&legacy).unwrap();
+    assert_eq!(serialized["field"], "contributors");
+    assert_eq!(serialized["source_raw"]["lang"], "en");
+    assert_eq!(
+        serialized["affiliation_raw"]["affiliationIdentifierScheme"],
+        "ISNI"
+    );
+}
+
+#[test]
 fn test_parse_datacite_record_extracts_existing_ror_id() {
     let record_json = r#"{
         "id": "10.1234/test",

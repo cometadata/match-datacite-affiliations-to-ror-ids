@@ -55,6 +55,11 @@ struct FileExtractionStats {
     malformed_records: u64,
 }
 
+struct FileExtractionOutcome {
+    stats: FileExtractionStats,
+    error: Option<anyhow::Error>,
+}
+
 #[derive(Serialize)]
 struct DoiRecord {
     doi: String,
@@ -104,79 +109,87 @@ fn process_file(
     occurrence_tx: &crossbeam_channel::Sender<Vec<AffiliationOccurrenceRecord>>,
     doi_tx: &crossbeam_channel::Sender<Vec<DoiRecord>>,
     batch_size: usize,
-) -> Result<FileExtractionStats> {
-    let file =
-        File::open(filepath).with_context(|| format!("Failed to open {}", filepath.display()))?;
-    let decoder = GzDecoder::new(file);
-    let reader = BufReader::new(decoder);
-
+) -> FileExtractionOutcome {
     let mut occurrence_batch = Vec::with_capacity(batch_size);
     let mut doi_batch: Vec<DoiRecord> = Vec::with_capacity(batch_size);
     let mut stats = FileExtractionStats::default();
 
-    for line in reader.lines() {
-        let line_str = line?;
-        if line_str.trim().is_empty() {
-            continue;
-        }
+    let result = (|| -> Result<()> {
+        let file = File::open(filepath)
+            .with_context(|| format!("Failed to open {}", filepath.display()))?;
+        let decoder = GzDecoder::new(file);
+        let reader = BufReader::new(decoder);
 
-        match serde_json::from_str::<serde_json::Value>(&line_str) {
-            Ok(record) => match parse_affiliations(&record) {
-                Ok(parsed) => {
-                    stats.valid_records += 1;
-                    stats.valid_dois += 1;
-                    stats.excluded_zero_length_affiliations +=
-                        parsed.excluded_zero_length_affiliations;
-                    doi_batch.push(DoiRecord { doi: parsed.doi });
+        for line in reader.lines() {
+            let line_str = line?;
+            if line_str.trim().is_empty() {
+                continue;
+            }
 
-                    for occurrence in parsed.occurrences {
-                        stats.occurrence_count += 1;
-                        match occurrence.party_type {
-                            PartyType::Creator => stats.creator_occurrences += 1,
-                            PartyType::Contributor => stats.contributor_occurrences += 1,
+            match serde_json::from_str::<serde_json::Value>(&line_str) {
+                Ok(record) => match parse_affiliations(&record) {
+                    Ok(parsed) => {
+                        stats.valid_records += 1;
+                        stats.valid_dois += 1;
+                        stats.excluded_zero_length_affiliations +=
+                            parsed.excluded_zero_length_affiliations;
+                        doi_batch.push(DoiRecord { doi: parsed.doi });
+
+                        for occurrence in parsed.occurrences {
+                            stats.occurrence_count += 1;
+                            match occurrence.party_type {
+                                PartyType::Creator => stats.creator_occurrences += 1,
+                                PartyType::Contributor => stats.contributor_occurrences += 1,
+                            }
+                            unique_affiliations
+                                .lock()
+                                .unwrap()
+                                .insert(occurrence.affiliation.clone());
+                            occurrence_batch.push(occurrence);
                         }
-                        unique_affiliations
-                            .lock()
-                            .unwrap()
-                            .insert(occurrence.affiliation.clone());
-                        occurrence_batch.push(occurrence);
                     }
-                }
+                    Err(error) => {
+                        stats.malformed_records += 1;
+                        error!("Failed to parse DataCite affiliations: {}", error);
+                    }
+                },
                 Err(error) => {
-                    stats.malformed_records += 1;
-                    error!("Failed to parse DataCite affiliations: {}", error);
+                    stats.malformed_json_records += 1;
+                    error!("Failed to parse JSON record: {}", error);
                 }
-            },
-            Err(error) => {
-                stats.malformed_json_records += 1;
-                error!("Failed to parse JSON record: {}", error);
+            }
+
+            if occurrence_batch.len() >= batch_size {
+                occurrence_tx
+                    .send(std::mem::take(&mut occurrence_batch))
+                    .map_err(|_| {
+                        anyhow!("occurrence writer stopped before extraction completed")
+                    })?;
+            }
+            if doi_batch.len() >= batch_size {
+                doi_tx
+                    .send(std::mem::take(&mut doi_batch))
+                    .map_err(|_| anyhow!("DOI writer stopped before extraction completed"))?;
             }
         }
 
-        if occurrence_batch.len() >= batch_size {
+        if !occurrence_batch.is_empty() {
             occurrence_tx
-                .send(std::mem::take(&mut occurrence_batch))
+                .send(occurrence_batch)
                 .map_err(|_| anyhow!("occurrence writer stopped before extraction completed"))?;
         }
-        if doi_batch.len() >= batch_size {
+        if !doi_batch.is_empty() {
             doi_tx
-                .send(std::mem::take(&mut doi_batch))
+                .send(doi_batch)
                 .map_err(|_| anyhow!("DOI writer stopped before extraction completed"))?;
         }
-    }
+        Ok(())
+    })();
 
-    if !occurrence_batch.is_empty() {
-        occurrence_tx
-            .send(occurrence_batch)
-            .map_err(|_| anyhow!("occurrence writer stopped before extraction completed"))?;
+    FileExtractionOutcome {
+        stats,
+        error: result.err(),
     }
-    if !doi_batch.is_empty() {
-        doi_tx
-            .send(doi_batch)
-            .map_err(|_| anyhow!("DOI writer stopped before extraction completed"))?;
-    }
-
-    Ok(stats)
 }
 
 fn write_jsonl<T: Serialize>(path: PathBuf, rx: crossbeam_channel::Receiver<Vec<T>>) -> Result<()> {
@@ -250,10 +263,10 @@ pub fn run(args: ExtractArgs) -> Result<()> {
     });
 
     let unique_ref = Arc::clone(&unique_affiliations);
-    let file_results: Vec<Result<FileExtractionStats>> = files
+    let file_results: Vec<FileExtractionOutcome> = files
         .par_iter()
         .map(|filepath| {
-            let result = process_file(
+            let outcome = process_file(
                 filepath,
                 &unique_ref,
                 &occurrence_tx,
@@ -261,7 +274,7 @@ pub fn run(args: ExtractArgs) -> Result<()> {
                 args.batch_size.max(1),
             );
             progress.inc(1);
-            result.with_context(|| format!("Failed to process {}", filepath.display()))
+            outcome
         })
         .collect();
 
@@ -277,17 +290,13 @@ pub fn run(args: ExtractArgs) -> Result<()> {
 
     let mut stats = FileExtractionStats::default();
     let mut processing_error = None;
-    for file_result in file_results {
-        match file_result {
-            Ok(file_stats) => {
-                if let Err(error) = stats.checked_add_assign(&file_stats) {
-                    processing_error.get_or_insert(error);
-                }
-            }
-            Err(error) => {
-                error!("{}", error);
-                processing_error.get_or_insert(error);
-            }
+    for outcome in file_results {
+        if let Err(error) = stats.checked_add_assign(&outcome.stats) {
+            processing_error.get_or_insert(error);
+        }
+        if let Some(error) = outcome.error {
+            error!("Failed to process input file: {}", error);
+            processing_error.get_or_insert(error);
         }
     }
     if let Err(error) = occurrence_writer_result {

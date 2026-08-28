@@ -138,6 +138,7 @@ fn process_doi_group(
         Some(EnrichedRecord {
             doi: doi.to_string(),
             creators,
+            contributors: Vec::new(),
         })
     }
 }

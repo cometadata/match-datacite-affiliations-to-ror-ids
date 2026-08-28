@@ -1,5 +1,4 @@
 use datacite_ror::AffiliationOccurrenceRecord;
-use datacite_ror::AuthorAffiliationRecord;
 use datacite_ror::Disagreement;
 use datacite_ror::EnrichedRecord;
 use datacite_ror::ExistingAssignment;
@@ -8,6 +7,19 @@ use datacite_ror::PartyType;
 use std::fs::File;
 use std::io::{BufRead, Write};
 use tempfile::TempDir;
+
+struct AuthorAffiliationRecord {
+    doi: String,
+    author_idx: usize,
+    author_name: String,
+    author_name_type: Option<String>,
+    author_given_name: Option<String>,
+    author_family_name: Option<String>,
+    affiliation_idx: usize,
+    affiliation: String,
+    affiliation_hash: String,
+    existing_ror_id: Option<String>,
+}
 
 fn create_minimal_ror_data(dir: &std::path::Path) -> std::path::PathBuf {
     let ror_file = dir.join("ror_data.json");
