@@ -295,6 +295,9 @@ fn test_extract_writes_report_before_returning_malformed_input_error() {
         serde_json::from_reader(File::open(output_dir.join("extraction_report.json")).unwrap())
             .unwrap();
     assert_eq!(report["malformed_json_records"], 1);
+    assert_eq!(report["input_files"], 1);
+    assert_eq!(report["processed_files"], 1);
+    assert_eq!(report["processing_complete"], true);
 }
 
 #[test]
@@ -323,6 +326,7 @@ fn test_extract_writes_report_before_returning_late_output_error() {
         serde_json::from_reader(File::open(output_dir.join("extraction_report.json")).unwrap())
             .unwrap();
     assert_eq!(report["valid_records"], 1);
+    assert_eq!(report["processing_complete"], false);
 }
 
 #[test]

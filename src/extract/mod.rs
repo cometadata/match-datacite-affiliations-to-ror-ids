@@ -45,6 +45,9 @@ pub fn find_jsonl_gz_files<P: AsRef<Path>>(directory: P) -> Result<Vec<PathBuf>>
 
 #[derive(Debug, Default, Serialize)]
 struct FileExtractionStats {
+    input_files: u64,
+    processed_files: u64,
+    processing_complete: bool,
     valid_records: u64,
     valid_dois: u64,
     occurrence_count: u64,
@@ -288,7 +291,10 @@ pub fn run(args: ExtractArgs) -> Result<()> {
         .unwrap_or_else(|_| Err(anyhow!("DOI writer thread panicked")));
     progress.finish();
 
-    let mut stats = FileExtractionStats::default();
+    let mut stats = FileExtractionStats {
+        input_files: files.len() as u64,
+        ..Default::default()
+    };
     let mut processing_error = None;
     for outcome in file_results {
         if let Err(error) = stats.checked_add_assign(&outcome.stats) {
@@ -297,6 +303,8 @@ pub fn run(args: ExtractArgs) -> Result<()> {
         if let Some(error) = outcome.error {
             error!("Failed to process input file: {}", error);
             processing_error.get_or_insert(error);
+        } else {
+            stats.processed_files += 1;
         }
     }
     if let Err(error) = occurrence_writer_result {
@@ -305,8 +313,6 @@ pub fn run(args: ExtractArgs) -> Result<()> {
     if let Err(error) = doi_writer_result {
         processing_error.get_or_insert(error);
     }
-
-    write_report(args.output.join("extraction_report.json"), &stats)?;
 
     let unique_result = (|| -> Result<usize> {
         let unique = unique_affiliations.lock().unwrap();
@@ -323,6 +329,10 @@ pub fn run(args: ExtractArgs) -> Result<()> {
             0
         }
     };
+
+    stats.processing_complete =
+        processing_error.is_none() && stats.processed_files == stats.input_files;
+    write_report(args.output.join("extraction_report.json"), &stats)?;
 
     info!("Extracted {} unique affiliations", unique_affiliation_count);
     info!("Output: {}", args.output.display());
