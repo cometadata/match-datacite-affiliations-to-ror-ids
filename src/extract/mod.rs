@@ -16,6 +16,7 @@ use tracing::{error, info};
 use crate::{AffiliationOccurrenceRecord, PartyType};
 
 mod parser;
+mod ror;
 pub use parser::parse_affiliations;
 
 #[derive(Args)]

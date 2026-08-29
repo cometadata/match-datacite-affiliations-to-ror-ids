@@ -4,6 +4,7 @@ use datacite_ror::EnrichedRecord;
 use datacite_ror::ExistingAssignment;
 use datacite_ror::ExistingAssignmentAggregated;
 use datacite_ror::PartyType;
+use datacite_ror::RorAssignmentStatus;
 use std::fs::File;
 use std::io::{BufRead, Write};
 use tempfile::TempDir;
@@ -35,6 +36,7 @@ fn write_creator_occurrences(dir: &std::path::Path, relationships: &[AuthorAffil
     let file = File::create(dir.join("doi_affiliation_occurrences.jsonl")).unwrap();
     let mut writer = std::io::BufWriter::new(file);
     for relationship in relationships {
+        let canonical_ror_id = relationship.existing_ror_id.clone();
         let occurrence = AffiliationOccurrenceRecord {
             doi: relationship.doi.clone(),
             party_type: PartyType::Creator,
@@ -48,7 +50,14 @@ fn write_creator_occurrences(dir: &std::path::Path, relationships: &[AuthorAffil
             affiliation: relationship.affiliation.clone(),
             affiliation_hash: relationship.affiliation_hash.clone(),
             affiliation_raw: None,
-            existing_ror_id: relationship.existing_ror_id.clone(),
+            ror_assignment_status: if canonical_ror_id.is_some() {
+                RorAssignmentStatus::Valid
+            } else {
+                RorAssignmentStatus::Unassigned
+            },
+            canonical_ror_id: canonical_ror_id.clone(),
+            invalid_ror_reason: None,
+            existing_ror_id: canonical_ror_id,
         };
         writeln!(writer, "{}", serde_json::to_string(&occurrence).unwrap()).unwrap();
     }
@@ -183,6 +192,9 @@ fn test_reconcile_full_pipeline() {
         affiliation: "University of Oxford".to_string(),
         affiliation_hash: "abc123".to_string(),
         affiliation_raw: None,
+        ror_assignment_status: RorAssignmentStatus::Unassigned,
+        canonical_ror_id: None,
+        invalid_ror_reason: None,
         existing_ror_id: None,
     };
     let canonical_file = std::fs::OpenOptions::new()
@@ -851,6 +863,9 @@ fn test_canonical_creator_enrichment_preserves_raw_payloads() {
             affiliation: "University of Oxford".to_string(),
             affiliation_hash: "oxford".to_string(),
             affiliation_raw: Some(serde_json::json!({"name":"University of Oxford"})),
+            ror_assignment_status: RorAssignmentStatus::Unassigned,
+            canonical_ror_id: None,
+            invalid_ror_reason: None,
             existing_ror_id: None,
         },
         AffiliationOccurrenceRecord {
@@ -868,6 +883,9 @@ fn test_canonical_creator_enrichment_preserves_raw_payloads() {
             affiliation_raw: Some(
                 serde_json::json!({"name":"Some Lab","affiliationIdentifier":"https://isni.org/isni/999","affiliationIdentifierScheme":"ISNI"}),
             ),
+            ror_assignment_status: RorAssignmentStatus::Unassigned,
+            canonical_ror_id: None,
+            invalid_ror_reason: None,
             existing_ror_id: None,
         },
     ];

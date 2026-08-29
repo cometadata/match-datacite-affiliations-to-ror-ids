@@ -27,6 +27,23 @@ pub enum PartyType {
     Contributor,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RorAssignmentStatus {
+    Unassigned,
+    Valid,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvalidRorReason {
+    MissingIdentifier,
+    NonStringIdentifier,
+    UnrecognizedFormat,
+    InvalidChecksum,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AffiliationOccurrenceRecord {
     pub doi: String,
@@ -47,6 +64,11 @@ pub struct AffiliationOccurrenceRecord {
     pub affiliation_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub affiliation_raw: Option<serde_json::Value>,
+    pub ror_assignment_status: RorAssignmentStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canonical_ror_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalid_ror_reason: Option<InvalidRorReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing_ror_id: Option<String>,
 }

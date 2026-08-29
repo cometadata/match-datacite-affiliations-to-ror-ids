@@ -1,4 +1,8 @@
-use crate::{hash_affiliation, AffiliationOccurrenceRecord, ParsedDataCiteRecord, PartyType};
+use super::ror::{parse_explicit_ror, ParsedRorAssignment};
+use crate::{
+    hash_affiliation, AffiliationOccurrenceRecord, ParsedDataCiteRecord, PartyType,
+    RorAssignmentStatus,
+};
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 
@@ -26,25 +30,6 @@ fn extract_affiliation_name(affiliation: &Value) -> Result<String> {
         _ => Err(anyhow!(
             "affiliations must be strings or objects with a string name"
         )),
-    }
-}
-
-fn extract_existing_ror_id(affiliation: &Value) -> Option<String> {
-    match affiliation {
-        Value::Object(_) => {
-            let scheme = affiliation
-                .get("affiliationIdentifierScheme")
-                .and_then(Value::as_str)?;
-            if scheme.eq_ignore_ascii_case("ROR") {
-                affiliation
-                    .get("affiliationIdentifier")
-                    .and_then(Value::as_str)
-                    .map(String::from)
-            } else {
-                None
-            }
-        }
-        _ => None,
     }
 }
 
@@ -102,6 +87,14 @@ fn extract_party_occurrences(
                 excluded_zero_length_affiliations += 1;
                 continue;
             }
+            let ror_assignment = match affiliation {
+                Value::Object(_) => parse_explicit_ror(affiliation),
+                _ => ParsedRorAssignment {
+                    status: RorAssignmentStatus::Unassigned,
+                    canonical_id: None,
+                    invalid_reason: None,
+                },
+            };
 
             occurrences.push(AffiliationOccurrenceRecord {
                 doi: doi.to_string(),
@@ -119,7 +112,10 @@ fn extract_party_occurrences(
                     Value::Object(_) => Some(affiliation.clone()),
                     _ => None,
                 },
-                existing_ror_id: extract_existing_ror_id(affiliation),
+                ror_assignment_status: ror_assignment.status,
+                canonical_ror_id: ror_assignment.canonical_id.clone(),
+                invalid_ror_reason: ror_assignment.invalid_reason,
+                existing_ror_id: ror_assignment.canonical_id,
             });
         }
     }

@@ -587,3 +587,73 @@ fn test_parse_canonical_occurrence_preserves_raw_party_and_affiliation_payloads(
         "ISNI"
     );
 }
+
+#[test]
+fn test_parse_affiliations_canonicalizes_supported_explicit_ror_forms() {
+    let record = serde_json::json!({
+        "id": "10.1234/ror-forms",
+        "attributes": {"creators": [{"affiliation": [
+            {"name": "Alpha", "affiliationIdentifierScheme": "ror", "affiliationIdentifier": " 02mhbdp94 "},
+            {"name": "Beta", "affiliationIdentifierScheme": "ROR", "affiliationIdentifier": "ror.org/03vek6s52"},
+            {"name": "Gamma", "affiliationIdentifierScheme": "ROR", "affiliationIdentifier": "HTTPS://ROR.ORG/052GG0110"}
+        ]}]}
+    });
+
+    let occurrences = datacite_ror::extract::parse_affiliations(&record)
+        .unwrap()
+        .occurrences;
+
+    assert_eq!(
+        occurrences
+            .iter()
+            .map(|value| value.canonical_ror_id.as_deref())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("https://ror.org/02mhbdp94"),
+            Some("https://ror.org/03vek6s52"),
+            Some("https://ror.org/052gg0110"),
+        ]
+    );
+    assert!(occurrences
+        .iter()
+        .all(|value| { value.ror_assignment_status == datacite_ror::RorAssignmentStatus::Valid }));
+}
+
+#[test]
+fn test_parse_affiliations_classifies_invalid_and_unassigned_ror_values() {
+    let record = serde_json::json!({
+        "id": "10.1234/ror-errors",
+        "attributes": {"contributors": [{"affiliation": [
+            {"name": "Missing", "affiliationIdentifierScheme": "ROR"},
+            {"name": "Non-string", "affiliationIdentifierScheme": "ROR", "affiliationIdentifier": 7},
+            {"name": "Checksum", "affiliationIdentifierScheme": "ROR", "affiliationIdentifier": "03vek6s53"},
+            {"name": "GRID", "affiliationIdentifierScheme": "GRID", "affiliationIdentifier": "grid.1"},
+            "Plain"
+        ]}]}
+    });
+
+    let occurrences = datacite_ror::extract::parse_affiliations(&record)
+        .unwrap()
+        .occurrences;
+
+    assert_eq!(
+        occurrences[0].invalid_ror_reason,
+        Some(datacite_ror::InvalidRorReason::MissingIdentifier)
+    );
+    assert_eq!(
+        occurrences[1].invalid_ror_reason,
+        Some(datacite_ror::InvalidRorReason::NonStringIdentifier)
+    );
+    assert_eq!(
+        occurrences[2].invalid_ror_reason,
+        Some(datacite_ror::InvalidRorReason::InvalidChecksum)
+    );
+    assert_eq!(
+        occurrences[3].ror_assignment_status,
+        datacite_ror::RorAssignmentStatus::Unassigned
+    );
+    assert_eq!(
+        occurrences[4].ror_assignment_status,
+        datacite_ror::RorAssignmentStatus::Unassigned
+    );
+}
