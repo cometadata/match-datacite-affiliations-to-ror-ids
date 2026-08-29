@@ -620,6 +620,27 @@ fn test_parse_affiliations_canonicalizes_supported_explicit_ror_forms() {
 }
 
 #[test]
+fn test_parse_affiliations_rejects_non_ascii_surrounding_whitespace_in_ror_ids() {
+    let record = serde_json::json!({
+        "id": "10.1234/ror-non-ascii-whitespace",
+        "attributes": {"creators": [{"affiliation": [
+            {"name": "NBSP", "affiliationIdentifierScheme": "ROR", "affiliationIdentifier": "\u{00a0}02mhbdp94\u{00a0}"},
+            {"name": "EM space", "affiliationIdentifierScheme": "ROR", "affiliationIdentifier": "\u{2003}02mhbdp94\u{2003}"}
+        ]}]}
+    });
+
+    let occurrences = datacite_ror::extract::parse_affiliations(&record)
+        .unwrap()
+        .occurrences;
+
+    assert!(occurrences.iter().all(|value| {
+        value.ror_assignment_status == datacite_ror::RorAssignmentStatus::Invalid
+            && value.invalid_ror_reason == Some(datacite_ror::InvalidRorReason::UnrecognizedFormat)
+            && value.canonical_ror_id.is_none()
+    }));
+}
+
+#[test]
 fn test_parse_affiliations_classifies_invalid_and_unassigned_ror_values() {
     let record = serde_json::json!({
         "id": "10.1234/ror-errors",

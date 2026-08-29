@@ -61,7 +61,9 @@ pub(super) fn parse_explicit_ror(affiliation: &Value) -> ParsedRorAssignment {
             invalid_reason: Some(InvalidRorReason::NonStringIdentifier),
         };
     };
-    let lower = raw_identifier.trim().to_ascii_lowercase();
+    let lower = raw_identifier
+        .trim_matches(|character: char| character.is_ascii_whitespace())
+        .to_ascii_lowercase();
     let identifier = lower
         .strip_prefix("https://ror.org/")
         .or_else(|| lower.strip_prefix("ror.org/"))
